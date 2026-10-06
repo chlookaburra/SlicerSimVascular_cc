@@ -1,25 +1,31 @@
 # Notes for coding agents
 
-3D Slicer extension holding the SimVascular modules the Marsden lab develops. Four scripted
+3D Slicer extension holding the SimVascular modules the Marsden lab develops. Five scripted
 modules, registered in `CMakeLists.txt`: `SDFStent`, `PaintModel`, `FaceAwareRemesh`,
-`SimVascularMeshPrep`. Each has a page under `Docs/`, linked from `README.md`.
+`SimVascularMeshPrep`, `SimVascularROM`. Each has a page under `Docs/`, linked from `README.md`.
 
 Paths below are relative to the repository root. The last section covers optional local
 tooling, and says where it is assumed to live.
 
 ## The layout that matters
 
-`FaceAwareRemesh` and `SimVascularMeshPrep` each split in two:
+`FaceAwareRemesh`, `SimVascularMeshPrep` and `SimVascularROM` each split in two:
 
-- **The scripted module** (`FaceAwareRemesh.py`, `SimVascularMeshPrep.py`) — an MRML adapter.
-  It reads the selected node, calls the package, puts the answer in the panel.
-- **A package beside it** (`svremesh/`, `svmeshcomplete/`) — the actual geometry, with its own
-  `pyproject.toml` and `LICENSE.txt`, pip-installable on its own.
+- **The scripted module** (`FaceAwareRemesh.py`, `SimVascularMeshPrep.py`, `SimVascularROM.py`)
+  — an MRML adapter. It reads the selected node, calls the package, puts the answer in the panel.
+- **A package beside it** (`svremesh/`, `svmeshcomplete/`, `svromsetup/`) — the actual work,
+  with its own `pyproject.toml` and `LICENSE.txt`, pip-installable on its own.
 
 **The packages import no `slicer`, no `sv`, no VMTK — only VTK and numpy.** That is the point of
 the split: a workflow packaging cases from a terminal calls the same functions and gets the same
 answer, and the tests need neither Slicer nor a mesher. Keep it that way. If a change needs
 MRML, it belongs in the module file, not the package.
+
+The one deliberate exception is `svromsetup.case`, which calls `sv_rom_simulation` (an external
+package, which imports VMTK) — imported inside the two functions that use it, never at the top,
+so the rest of `svromsetup` and its tests still need only VTK and numpy. Under Slicer, VMTK is
+SlicerVMTK's, assembled into a `vmtk.vtkvmtk` module by `SimVascularROM.ensureVmtk`; **never
+pip-install `vmtk` into Slicer**, since it pins a VTK of its own. `Docs/SimVascularROM.md` says why.
 
 `SDFStent` and `PaintModel` predate that pattern and don't follow it.
 
@@ -41,7 +47,16 @@ cd FaceAwareRemesh && PYTHONPATH=. python -m unittest discover -s tests
 cd SimVascularMeshPrep && python -m pytest
 ```
 
-Neither suite is wired into CTest yet: the `Testing/CMakeLists.txt` files only recurse, and
+**svromsetup** — pytest; 26 tests with numpy and VTK alone, the rest skip unless
+`sv_rom_simulation` (with VMTK) and `svzerodsolver` are found. Point at a checkout and a solver
+to run them all:
+
+```sh
+cd SimVascularROM && SV_ROM_SIMULATION_PATH=/path/to/svROMSimulation \
+  SVZERODSOLVER=/path/to/svzerodsolver python -m pytest
+```
+
+None of the suites is wired into CTest yet: the `Testing/CMakeLists.txt` files only recurse, and
 `FaceAwareRemesh/Testing/Python/CMakeLists.txt` has its `slicer_add_python_unittest` line
 commented out. Run them directly, as above.
 
