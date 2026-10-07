@@ -133,9 +133,10 @@ def solver_xml(faces: Sequence[Face], conditions_by_name: Mapping[str, object], 
         for key, tag in wanted:
             _setting(output, tag, key, resolved)
 
-    linear_solver = ET.SubElement(fluid, "LS", {"type": "NS"})
-    algebra = ET.SubElement(linear_solver, "Linear_algebra", {"type": resolved["ls.linear_algebra"]})
-    _setting(algebra, "Preconditioner", "ls.preconditioner", resolved)
+    linear_solver = ET.SubElement(fluid, "LS", {"type": settings_module.LINEAR_SOLVER_TYPE})
+    algebra = ET.SubElement(linear_solver, "Linear_algebra",
+                            {"type": settings_module.LINEAR_ALGEBRA_TYPE})
+    ET.SubElement(algebra, "Preconditioner").text = settings_module.PRECONDITIONER
     for key, tag in LINEAR_SOLVER_TAGS:
         _setting(linear_solver, tag, key, resolved)
 

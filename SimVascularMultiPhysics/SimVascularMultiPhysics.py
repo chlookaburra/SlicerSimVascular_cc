@@ -24,11 +24,11 @@ In `svmpsetup`, the package beside this file, which imports nothing from Slicer.
 MRML adapter: it reads the selected node, calls the package, and says what it wrote. A case
 written from a terminal calls the same functions.
 
-## Rigid-wall CFD only, for now
+## Rigid-wall CFD only
 
-The flow in the lumen, with walls that do not move. Fluid-structure interaction is to come: in
-svMultiPhysics it is solved on a second mesh, of the vessel wall, which nothing upstream of this
-panel makes yet.
+The flow in the lumen, with walls that do not move: the one kind of simulation this panel writes,
+for a class running svMultiPhysics as it comes. Its linear solver is fixed for that, Navier-Stokes
+through svMultiPhysics' own linear algebra, and the panel says so rather than offering a choice.
 """
 
 import json
@@ -170,6 +170,11 @@ class SimVascularMultiPhysicsWidget(ScriptedLoadableModuleWidget, VTKObservation
             group.title = _(section)
             group.collapsed = True
             groups[section] = qt.QFormLayout(group)
+            note = settings.SECTION_NOTES.get(section)
+            if note:
+                label = qt.QLabel(_(note))
+                label.wordWrap = True
+                groups[section].addRow(label)
             # The container's layout rather than the .ui's name for it: childWidgetVariables
             # finds widgets, and a layout is not one.
             self.ui.settingsContainer.layout().addWidget(group)

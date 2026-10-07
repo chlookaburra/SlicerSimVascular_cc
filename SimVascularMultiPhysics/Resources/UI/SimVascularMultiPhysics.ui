@@ -122,38 +122,19 @@
    <item>
     <widget class="ctkCollapsibleButton" name="simulationCollapsibleButton">
      <property name="text">
-      <string>Simulation</string>
+      <string>CFD Simulation</string>
      </property>
      <layout class="QVBoxLayout" name="simulationVerticalLayout">
       <item>
        <layout class="QFormLayout" name="simulationFormLayout">
         <item row="0" column="0">
-         <widget class="QLabel" name="simulationTypeLabel">
-          <property name="text">
-           <string>Simulation type:</string>
-          </property>
-         </widget>
-        </item>
-        <item row="0" column="1">
-         <widget class="QComboBox" name="simulationTypeComboBox">
-          <property name="toolTip">
-           <string>What is simulated. Rigid-wall CFD solves the flow in the lumen with walls that do not move.</string>
-          </property>
-          <item>
-           <property name="text">
-            <string>Rigid wall CFD</string>
-           </property>
-          </item>
-         </widget>
-        </item>
-        <item row="1" column="0">
          <widget class="QLabel" name="outputDirectoryLabel">
           <property name="text">
            <string>Output folder:</string>
           </property>
          </widget>
         </item>
-        <item row="1" column="1">
+        <item row="0" column="1">
          <widget class="ctkPathLineEdit" name="outputDirectoryPathLineEdit">
           <property name="toolTip">
            <string>Where the case is written: solver.xml, the mesh folder it reads and the inflow waveforms. Every path in solver.xml is relative to this folder, which is the one svMultiPhysics is run from, so it can be moved as a whole. Created if it does not exist.</string>

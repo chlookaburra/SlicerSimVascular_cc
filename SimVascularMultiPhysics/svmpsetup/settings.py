@@ -94,6 +94,22 @@ BOUNDARY_CONDITIONS = "Boundary conditions"
 OUTPUTS = "Outputs"
 SECTIONS = (GENERAL, MESH, FLUID, LINEAR_SOLVER, BOUNDARY_CONDITIONS, OUTPUTS)
 
+# What a section says above its fields, where something about it is fixed rather than set: the
+# fields are only what can be changed, and a section that leaves part of itself unsaid reads as
+# though that part were up to the solver.
+SECTION_NOTES = {
+    LINEAR_SOLVER: 'For a CFD simulation, default LS type is "NS" and Linear_algebra type is '
+                   '"fsils".',
+}
+
+# The linear solver a CFD simulation is written with, fixed rather than set: the Navier-Stokes
+# solver, through svMultiPhysics' own linear algebra, which is what every rigid-wall case here
+# runs and the one that needs nothing beyond svMultiPhysics built. Trilinos or PETSc would have to
+# be built into the solver, and the panel is for a class running the solver as it comes.
+LINEAR_SOLVER_TYPE = "NS"
+LINEAR_ALGEBRA_TYPE = "fsils"
+PRECONDITIONER = "fsils"
+
 SETTINGS = (
     # GeneralSimulationParameters, as the Fontan template sets them.
     Setting("general.continue_previous_simulation", GENERAL, "Continue previous simulation", BOOL,
@@ -144,13 +160,9 @@ SETTINGS = (
     Setting("fluid.viscosity", FLUID, "Viscosity", FLOAT, 0.04,
             "Poise, g/(cm·s); a Newtonian fluid.", minimum=0.0),
 
-    # The fluid's LS type="NS": the lab's rigid-wall defaults, exactly. Absolute_tolerance is
-    # not among them and is left to svMultiPhysics' own (1e-10), which the Fontan template
-    # tightens to 1e-17; that was considered and not taken.
-    Setting("ls.linear_algebra", LINEAR_SOLVER, "Linear algebra", TEXT, "fsils",
-            "The linear algebra package: fsils is svMultiPhysics' own and needs nothing else "
-            "built.", choices=("fsils", "trilinos", "petsc")),
-    Setting("ls.preconditioner", LINEAR_SOLVER, "Preconditioner", TEXT, "fsils"),
+    # The fluid's LS type="NS" with fsils (fixed; see LINEAR_SOLVER_TYPE): the lab's rigid-wall
+    # defaults, exactly. Absolute_tolerance is not among them and is left to svMultiPhysics' own
+    # (1e-10), which the Fontan template tightens to 1e-17; that was considered and not taken.
     Setting("ls.max_iterations", LINEAR_SOLVER, "Max iterations", INT, 10, minimum=1),
     Setting("ls.ns_gm_max_iterations", LINEAR_SOLVER, "NS GM max iterations", INT, 200, minimum=1),
     Setting("ls.ns_cg_max_iterations", LINEAR_SOLVER, "NS CG max iterations", INT, 500, minimum=1),

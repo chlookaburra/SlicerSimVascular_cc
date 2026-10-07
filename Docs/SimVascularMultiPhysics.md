@@ -34,7 +34,7 @@ mpiexec -np 8 svmultiphysics solver.xml
    - **Resistance**: `R`.
 
    Every wall face is given a no-slip condition; there is nothing to set for them.
-4. **Check the settings** under **Simulation**. Each group is collapsed and starts at the
+4. **Check the settings** under **CFD Simulation**. Each group is collapsed and starts at the
    defaults; a value you change is shown in bold, and one that cannot be read in red, with the
    reason as its tooltip. **Reset settings to defaults** puts them all back. The time stepping is
    10 s of 1 ms steps unless you change it (see *Defaults* below).
@@ -80,7 +80,9 @@ is not the number of columns: two would smooth a waveform into very nearly a sin
 All the defaults are in one table, `svmpsetup/settings.py`. The panel draws its fields from it,
 and nothing else holds a default:
 
-- **Linear solver:** the lab's rigid-wall defaults. `LS type="NS"` with fsils: `Max_iterations`
+- **Linear solver:** for a CFD simulation the LS type is `NS` and the `Linear_algebra` type
+  `fsils` (with the fsils preconditioner). These are fixed rather than settings, and the group says
+  so. Its settings are the lab's rigid-wall defaults: `Max_iterations`
   10, `NS_GM_max_iterations` 200, `NS_CG_max_iterations` 500, `Tolerance` 0.4, `NS_GM_tolerance`
   0.01, `NS_CG_tolerance` 0.2, `Krylov_space_dimension` 50. There is no `Absolute_tolerance`, so
   svMultiPhysics' own 1e-10 applies. The Fontan template tightens it to 1e-17; that was considered
@@ -153,11 +155,9 @@ use. Two copies would be two tables that drift. The conditions are kept on the m
 the attribute the ROM panel first kept them in, so scenes saved before this panel existed still
 open with theirs.
 
-### Not yet
+### Not here
 
-- **FSI.** svMultiPhysics' ALE FSI needs a second mesh, of the vessel wall, which nothing
-  upstream of this panel makes yet. Its linear solver defaults are to be `GMRES` with fsils:
-  `Tolerance` 1e-4, `Max_iterations` 1000, `Krylov_space_dimension` 300.
+- **FSI.** The panel writes rigid-wall CFD only, which is what the class runs.
 - **Running the case.** The module writes it; running is done elsewhere.
 
 ### Tests
