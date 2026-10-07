@@ -10,15 +10,19 @@ CAPS = {2: "cap_inlet", 3: "cap_right", 4: "cap_left"}
 
 # -- typed in the table ----------------------------------------------------------
 @pytest.mark.parametrize("condition", [Inflow.steady(12.5), RCR(100.0, 1e-4, 1500.0, 0.0),
-                                       Resistance(250.0, 6666.1)])
+                                       Resistance(250.0)])
 def test_what_the_table_shows_reads_back_as_the_same_condition(condition):
     text = bcs.to_text(condition)
     assert bcs.from_text(condition.kind, text) == condition
 
 
-def test_a_distal_pressure_may_be_left_out():
-    assert bcs.from_text(bcs.RESISTANCE_KIND, "250") == Resistance(250.0, 0.0)
+def test_an_rcr_distal_pressure_may_be_left_out_and_a_resistance_has_none():
+    """A resistance is R alone, as svMultiPhysics' is: a second value is refused rather than
+    read as a distal pressure the 3D solver would then drop."""
     assert bcs.from_text(bcs.RCR_KIND, "100, 1e-4 1500") == RCR(100.0, 1e-4, 1500.0, 0.0)
+    assert bcs.from_text(bcs.RESISTANCE_KIND, "250") == Resistance(250.0)
+    with pytest.raises(BoundaryConditionError, match="takes R; 2 value"):
+        bcs.from_text(bcs.RESISTANCE_KIND, "250, 6666")
 
 
 def test_a_waveform_survives_its_own_description_and_is_replaced_by_a_number():
@@ -121,9 +125,18 @@ def test_a_steady_inflow_takes_the_period_of_the_waveforms_beside_it():
 def test_rcrt_and_resistance_files_round_trip(tmp_path):
     rcrs = {"cap_right": RCR(100.0, 1e-4, 1500.0, 10.0), "cap_left": RCR(200.0, 2e-4, 2500.0, 0.0)}
     assert bcs.read_rcrt(bcs.write_rcrt(tmp_path / "rcrt.dat", rcrs)) == rcrs
-    resistances = {"cap_right": Resistance(100.0, 5.0), "cap_left": Resistance(200.0)}
+    resistances = {"cap_right": Resistance(100.0), "cap_left": Resistance(200.0)}
     assert bcs.read_resistance(bcs.write_resistance(tmp_path / "resistance.dat", resistances)) \
         == resistances
+
+
+def test_a_simvascular_resistance_with_a_distal_pressure_is_refused_by_name(tmp_path):
+    path = tmp_path / "resistance.dat"
+    path.write_text("cap_lpa 1200 0\ncap_rpa 900\n")
+    assert bcs.read_resistance(path) == {"cap_lpa": Resistance(1200.0), "cap_rpa": Resistance(900.0)}
+    path.write_text("cap_lpa 1200 6666\n")
+    with pytest.raises(BoundaryConditionError, match="cap_lpa.*RCR"):
+        bcs.read_resistance(path)
 
 
 def test_an_rcrt_written_by_simvascular_is_read(tmp_path):
@@ -163,10 +176,10 @@ def test_the_package_reads_the_files_as_they_are_written(tmp_path):
     from sv_rom_simulation.parameters import Parameters
 
     bcs.write_rcrt(tmp_path / "rcrt.dat", {"cap_right": RCR(100.0, 1e-4, 1500.0, 10.0)})
-    bcs.write_resistance(tmp_path / "resistance.dat", {"cap_left": Resistance(200.0, 5.0)})
+    bcs.write_resistance(tmp_path / "resistance.dat", {"cap_left": Resistance(200.0)})
     parameters = Parameters()
     parameters.outflow_bc_type = ["rcrt.dat", "resistance.dat"]
     parameters.outflow_bc_file = str(tmp_path)
     values, kinds = io_1d.read_variable_outflow_bcs(parameters)
-    assert values == {"cap_right": [100.0, 1e-4, 1500.0, 10.0], "cap_left": ["200", "5"]}
+    assert values == {"cap_right": [100.0, 1e-4, 1500.0, 10.0], "cap_left": ["200", 0.0]}
     assert kinds == {"cap_right": "rcr", "cap_left": "resistance"}

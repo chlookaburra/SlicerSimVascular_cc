@@ -8,8 +8,11 @@ cap. Three kinds cover what a vascular model takes, and each is what svZeroDSolv
   cavae, the hepatic veins and the azygous all enter, and the pulmonary arteries all leave.
 - **RCR**, a proximal resistance, a compliance and a distal resistance, draining to a distal
   pressure: the Windkessel that stands in for the vascular bed beyond an outlet.
-- **Resistance**, the same with no compliance, which is what an outlet into a low-impedance
-  bed -- the lungs, in a Fontan -- is usually given.
+- **Resistance**, a resistance alone, draining to zero pressure: what an outlet into a
+  low-impedance bed -- the lungs, in a Fontan -- is usually given. It has no distal pressure,
+  because svMultiPhysics' Resistance condition has none (it is `P = R Q`), and the same
+  conditions are written for the 0D and the 3D solver: an outlet that needs a pressure to drain
+  to is an RCR.
 
 Units are cgs throughout, as both solvers take them: flow in mL/s, resistance in dyn·s/cm⁵,
 compliance in cm⁵/dyn, pressure in dyn/cm². Nothing here converts; the panel says so beside
@@ -111,7 +114,6 @@ class RCR:
 @dataclass(frozen=True)
 class Resistance:
     R: float
-    Pd: float = 0.0
     kind = RESISTANCE_KIND
 
 
@@ -121,7 +123,7 @@ class Resistance:
 VALUE_ORDER = {
     INFLOW: ("Q",),
     RCR_KIND: ("Rp", "C", "Rd", "Pd"),
-    RESISTANCE_KIND: ("R", "Pd"),
+    RESISTANCE_KIND: ("R",),
 }
 
 
@@ -146,7 +148,7 @@ def to_text(condition) -> str:
         return ", ".join(_number(value) for value in (condition.Rp, condition.C, condition.Rd,
                                                       condition.Pd))
     if isinstance(condition, Resistance):
-        return ", ".join(_number(value) for value in (condition.R, condition.Pd))
+        return _number(condition.R)
     raise BoundaryConditionError(f"Not a boundary condition: {condition!r}")
 
 
@@ -170,11 +172,12 @@ def from_text(kind: str, text: str, previous=None, period: float = 1.0):
             f"Could not read {text!r} as numbers. {kind} takes "
             f"{', '.join(VALUE_ORDER[kind])}, in that order.") from None
     names = VALUE_ORDER[kind]
-    required = 1 if kind == INFLOW else len(names) - 1
+    # Every value but an RCR's distal pressure has to be there; that one is 0 when left out.
+    required = len(names) - 1 if kind == RCR_KIND else len(names)
     if not required <= len(values) <= len(names):
         raise BoundaryConditionError(
             f"{kind} takes {', '.join(names)}"
-            + ("" if kind == INFLOW else f" ({names[-1]} may be left out, and is then 0)")
+            + (f" ({names[-1]} may be left out, and is then 0)" if kind == RCR_KIND else "")
             + f"; {len(values)} value(s) were given.")
     if any(not math.isfinite(value) for value in values):
         raise BoundaryConditionError("Every value has to be a finite number.")
@@ -204,7 +207,7 @@ def to_json(conditions: Mapping[int, object]) -> str:
             entry = {"type": RCR_KIND, "Rp": condition.Rp, "C": condition.C, "Rd": condition.Rd,
                      "Pd": condition.Pd}
         elif isinstance(condition, Resistance):
-            entry = {"type": RESISTANCE_KIND, "R": condition.R, "Pd": condition.Pd}
+            entry = {"type": RESISTANCE_KIND, "R": condition.R}
         else:
             raise BoundaryConditionError(f"Not a boundary condition: {condition!r}")
         stored[str(face_id)] = entry
@@ -232,7 +235,7 @@ def from_json(text: str) -> dict:
                 condition = RCR(float(entry["Rp"]), float(entry["C"]), float(entry["Rd"]),
                                 float(entry.get("Pd", 0.0)))
             elif kind == RESISTANCE_KIND:
-                condition = Resistance(float(entry["R"]), float(entry.get("Pd", 0.0)))
+                condition = Resistance(float(entry["R"]))
             else:
                 continue
             conditions[int(face_id)] = condition
@@ -243,7 +246,7 @@ def from_json(text: str) -> dict:
 
 # -- whether they close the model ------------------------------------------------
 def problems(conditions: Mapping[int, object], cap_names: Mapping[int, str],
-             inlet_face_id: int | None) -> list:
+             inlet_face_id: int | None, *, source_required: bool = True) -> list:
     """What stops these conditions from closing the model, in words; empty when nothing does.
 
     Each is something the package or the solver would otherwise find later and say less
@@ -255,13 +258,18 @@ def problems(conditions: Mapping[int, object], cap_names: Mapping[int, str],
     - no outlet at all. With every cap prescribing flow, nothing sets the pressure, and the
       solver's system is singular; it fails to converge rather than saying why;
     - inflows over different periods, which the package refuses: the cycle is the inlet's.
+
+    `source_required` is False for a 3D model, which has no centerlines and so no source; the
+    other three hold of it as they do of a 0D one.
     """
     found = []
     missing = [name for face_id, name in sorted(cap_names.items())
                if conditions.get(face_id) is None]
     if missing:
         found.append(f"{len(missing)} cap(s) have no boundary condition: {', '.join(missing)}.")
-    if inlet_face_id is None:
+    if not source_required:
+        pass
+    elif inlet_face_id is None:
         found.append("Choose the source the centerlines start from.")
     elif inlet_face_id in cap_names and not isinstance(conditions.get(inlet_face_id), Inflow):
         found.append(f"The source, {cap_names[inlet_face_id]}, has to be an inflow: the centerlines "
@@ -393,7 +401,12 @@ def write_rcrt(path, conditions: Mapping[str, RCR]) -> Path:
 
 
 def read_resistance(path) -> dict:
-    """`{face name: Resistance}` from a SimVascular `resistance.dat`: name, R and optionally Pd."""
+    """`{face name: Resistance}` from a SimVascular `resistance.dat`: name, R, and a Pd of 0.
+
+    SimVascular's file can carry a distal pressure as a third column, and a resistance here has
+    none (see the module docstring). One of 0 is the same condition and is read; any other is
+    refused by name rather than dropped, which would lower that outlet's pressure by it.
+    """
     found = {}
     for number, line in enumerate(Path(path).read_text().splitlines(), start=1):
         values = line.split()
@@ -402,16 +415,20 @@ def read_resistance(path) -> dict:
         try:
             if len(values) not in (2, 3):
                 raise ValueError
-            found[values[0]] = Resistance(*(float(value) for value in values[1:]))
+            numbers = [float(value) for value in values[1:]]
         except ValueError:
-            raise BoundaryConditionError(f"{path}, line {number}: expected a face name, a "
-                                         f"resistance and optionally a distal pressure, found "
-                                         f"{line.strip()!r}.") from None
+            raise BoundaryConditionError(f"{path}, line {number}: expected a face name and a "
+                                         f"resistance, found {line.strip()!r}.") from None
+        if len(numbers) == 2 and numbers[1] != 0.0:
+            raise BoundaryConditionError(
+                f"{path}: {values[0]} has a distal pressure of {numbers[1]:g}, and a resistance "
+                "here has none. Give that outlet an RCR instead.")
+        found[values[0]] = Resistance(numbers[0])
     return found
 
 
 def write_resistance(path, conditions: Mapping[str, Resistance]) -> Path:
     path = Path(path)
-    path.write_text("".join(f"{name} {resistance.R:.10g} {resistance.Pd:.10g}\n"
+    path.write_text("".join(f"{name} {resistance.R:.10g}\n"
                             for name, resistance in conditions.items()))
     return path

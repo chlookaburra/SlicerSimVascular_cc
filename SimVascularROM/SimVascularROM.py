@@ -64,20 +64,26 @@ from slicer.ScriptedLoadableModule import (
 )
 from slicer.util import VTKObservationMixin
 
-from svmeshcomplete import faces
-from svmeshcomplete.face_table import Face, sanitized
+from svmeshcomplete.face_table import sanitized
 from svromsetup import boundary_conditions as bcs
 from svromsetup import case, results, solver, visualization
 
-# The face names are SimVascular Mesh Prep's, kept on the mesh as `{"<face id>": "<name>"}`.
-# Read here, never written: a name typed in two panels is two names, and the one in Mesh Prep is
-# the one the mesh-complete folder and every 3D case of this mesh are written under.
-FACE_NAMES_ATTRIBUTE = "SimVascularMeshPrep.FaceNames"
+# The faces and the table of their conditions, shared with SimVascular MultiPhysics -- the names
+# are Mesh Prep's and the conditions one set per mesh, whichever solver they are written for.
+from SimVascularROMLib.BoundaryConditionsTable import (  # noqa: F401 (the tests use these)
+    BOUNDARY_CONDITIONS_ATTRIBUTE,
+    FACE_NAMES_ATTRIBUTE,
+    INVALID_VALUES_COLOR,
+    KIND_CHOICES,
+    TYPE_COLUMN,
+    VALUES_COLUMN,
+    BoundaryConditionsTable,
+    NamedMeshFaces,
+    clearHighlight,
+)
 
-# What this panel keeps on the mesh, beside the names, for the reason Mesh Prep keeps those there:
-# a scene can hold a pre-op and a post-op anatomy, each with a face 4, and conditions kept per
-# scene would move between them when the selector changed.
-BOUNDARY_CONDITIONS_ATTRIBUTE = "SimVascularROM.BoundaryConditions"
+# The cap the centerlines start at, kept on the mesh beside its conditions. The 0D panel's own:
+# a 3D model has no source.
 INLET_FACE_ID_ATTRIBUTE = "SimVascularROM.InletFaceID"
 
 # The nodes a run leaves in the scene, referenced from the mesh they belong to so that each
@@ -101,17 +107,6 @@ ROM_PACKAGE_SETTING = "SimVascularROM/svROMSimulationPath"
 SOLVER_SETTING = "SimVascularROM/SolverExecutable"
 VISUALIZATION_SCRIPT_SETTING = "SimVascularROM/VisualizationScript"
 VISUALIZATION_PYTHON_SETTING = "SimVascularROM/VisualizationPython"
-WAVEFORM_DIRECTORY_SETTING = "SimVascularROM/WaveformDirectory"
-
-COLUMNS = ("Name", "Type", "Values")
-NAME_COLUMN = COLUMNS.index("Name")
-CONDITION_COLUMN = COLUMNS.index("Type")
-VALUES_COLUMN = COLUMNS.index("Values")
-
-# What the condition column offers, the first meaning none: a cap with no condition is shown as
-# one, rather than given a default that looks like a decision.
-KIND_CHOICES = (None,) + bcs.KINDS
-NO_CONDITION_TEXT = "-"
 
 # The units the mesh is in, which are Slicer's: its coordinates are millimetres whatever unit it
 # displays them in. Both solvers work in centimetres, and the package scales lengths by 0.1 and
@@ -126,8 +121,6 @@ PLOT_COLUMN_ATTRIBUTE = "SimVascularROM.Column"
 # as an array of its own for the Models module to colour by.
 RESULTS_QUANTITY = "Pressure"
 RESULTS_ARRAY_NAME = results.PRESSURE_ARRAY_NAME
-
-INVALID_VALUES_COLOR = qt.QColor(200, 60, 40)
 
 # The modules SlicerVMTK's classes are in. pip's VMTK gathers the same classes into one module,
 # `vmtk.vtkvmtk`, and that is what `sv_rom_simulation` imports.
@@ -216,19 +209,10 @@ class SimVascularROMWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         VTKObservationMixin.__init__(self)
         self.logic = None
         self._updating = False
-        self._caps = []
-        self._names = {}
-        self._arrayName = None
-        self._boundary = None
-        self._measuredKey = None
-        self._measured = []
-        self._measuredBoundary = None
-        self._measuredArrayName = None
-        # The conditions of the selected mesh, by face id, as saved on it. What was typed and
-        # could not be read is kept apart, text and reason, so that the cell still shows what was
-        # typed -- a value that vanishes on a typo is worse than one drawn in red.
-        self._conditions = {}
-        self._invalid = {}
+        # The selected mesh's faces, and the table of their conditions, which are shared with
+        # SimVascular MultiPhysics: see SimVascularROMLib.BoundaryConditionsTable.
+        self.namedFaces = NamedMeshFaces()
+        self.conditionsTable = None
         self._inletFaceId = None
         # What the centerlines in the case folder were computed from, so that a run can tell
         # whether they are still the mesh's: changing the inlet, the folder or a name makes them
@@ -249,24 +233,11 @@ class SimVascularROMWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         self.ui = slicer.util.childWidgetVariables(uiWidget)
         uiWidget.setMRMLScene(slicer.mrmlScene)
         self.logic = SimVascularROMLogic()
-
-        table = self.ui.facesTable
-        table.setColumnCount(len(COLUMNS))
-        table.setHorizontalHeaderLabels([_(name) for name in COLUMNS])
-        table.verticalHeader().setVisible(False)
-        # A waveform shows as its file's path, and a path cut short at its end loses the one part
-        # of it that says which file it is. Without word wrap, which the table has on by default
-        # and which, a path being full of places to break, elides the end whatever the mode says.
-        table.setWordWrap(False)
-        table.setTextElideMode(qt.Qt.ElideMiddle)
-        table.horizontalHeader().setSectionResizeMode(qt.QHeaderView.ResizeToContents)
-        table.horizontalHeader().setSectionResizeMode(VALUES_COLUMN, qt.QHeaderView.Stretch)
-        # A double-click is the panel's to answer rather than the table's, because it means two
-        # things: on an inflow it asks for a waveform file, anywhere else it opens the cell for
-        # typing. Typing over a selected cell, which is how a steady inflow is entered, still
-        # opens it directly.
-        self.ui.facesTable.setEditTriggers(qt.QAbstractItemView.EditKeyPressed
-                                           | qt.QAbstractItemView.AnyKeyPressed)
+        self.conditionsTable = BoundaryConditionsTable(
+            self.ui.facesTable, self.ui.valuesHintLabel, self.setStatus,
+            changed=self.updateButtons, selectionChanged=lambda _faceIds: self.plotSelected(),
+            startDirectory=lambda: self.ui.caseDirectoryPathLineEdit.currentPath)
+        self.conditionsTable.emphasisNote = _("The source: the centerlines start here.")
 
         settings = qt.QSettings()
         self.ui.romPackagePathLineEdit.currentPath = settings.value(ROM_PACKAGE_SETTING, "")
@@ -285,9 +256,6 @@ class SimVascularROMWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         self.ui.inputMeshSelector.connect("currentNodeChanged(vtkMRMLNode*)", self.onMeshChanged)
         self.ui.openMeshPrepButton.connect("clicked(bool)", self.onOpenMeshPrep)
         self.ui.inletComboBox.connect("currentIndexChanged(int)", self.onInletChanged)
-        self.ui.facesTable.connect("cellChanged(int,int)", self.onValuesEdited)
-        self.ui.facesTable.connect("itemSelectionChanged()", self.onFaceSelectionChanged)
-        self.ui.facesTable.connect("cellDoubleClicked(int,int)", self.onCellDoubleClicked)
         self.ui.computeCenterlinesButton.connect("clicked(bool)", self.onComputeCenterlines)
         self.ui.createSolverFilesButton.connect("clicked(bool)", self.onCreateSolverFiles)
         self.ui.runButton.connect("clicked(bool)", self.onRun)
@@ -306,14 +274,15 @@ class SimVascularROMWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         self.restoreFromParameterNode()
 
     def enter(self):
-        """Coming back, perhaps from Mesh Prep with the faces renamed: the names are read again."""
+        """Coming back, perhaps from Mesh Prep with the faces renamed, or from SimVascular
+        MultiPhysics with the conditions changed: both are read again."""
         self.restoreFromParameterNode()
 
     def exit(self):
-        self.logic.clearHighlight()
+        clearHighlight()
 
     def cleanup(self):
-        self.logic.clearHighlight()
+        clearHighlight()
         visualization.stop(self._visualization)
         self.removeObservers()
 
@@ -363,16 +332,11 @@ class SimVascularROMWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         node.SetNodeReferenceID(INPUT_MESH_REFERENCE, self.ui.inputMeshSelector.currentNodeID or None)
         node.EndModify(wasModifying)
 
-    def saveConditions(self):
-        """Write the selected mesh's conditions and inlet onto it, as they are edited."""
+    def saveInlet(self):
         mesh = self.ui.inputMeshSelector.currentNode()
-        if mesh is None or not self._caps:
-            return
-        capIds = {faceId for faceId, _name, _geometry in self._caps}
-        mesh.SetAttribute(BOUNDARY_CONDITIONS_ATTRIBUTE, bcs.to_json(
-            {faceId: condition for faceId, condition in self._conditions.items() if faceId in capIds}))
-        mesh.SetAttribute(INLET_FACE_ID_ATTRIBUTE,
-                          str(self._inletFaceId) if self._inletFaceId is not None else "")
+        if mesh is not None and self.conditionsTable.caps:
+            mesh.SetAttribute(INLET_FACE_ID_ATTRIBUTE,
+                              str(self._inletFaceId) if self._inletFaceId is not None else "")
 
     def onSimulationParameterChanged(self, *_args):
         if self._updating:
@@ -387,76 +351,42 @@ class SimVascularROMWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         The names are Mesh Prep's, read off the mesh every time rather than remembered, so that a
         rename there arrives here on coming back.
         """
-        self._caps, self._names, self._conditions, self._invalid = [], {}, {}, {}
-        self._arrayName, self._boundary, self._inletFaceId = None, None, None
+        self._inletFaceId = None
         self._faceResults, self._resultsNote = [], ""
-        self.logic.clearHighlight()
         self.ui.openMeshPrepButton.visible = False
         node = self.ui.inputMeshSelector.currentNode()
         if not self._updating:
             self.saveToParameterNode()
-        mesh = node.GetMesh() if node is not None else None
-        if mesh is None:
+        if node is None or node.GetMesh() is None:
             self.ui.meshStatusLabel.text = ""
-            self.populate()
+            self.showConditions(None)
             return
-
-        self._names = self.logic.faceNames(node)
         try:
-            measured = self.measure(node)
+            named = self.namedFaces.read(node)
         except ValueError as error:
             self.ui.meshStatusLabel.text = str(error)
-            self.populate()
+            self.showConditions(None)
             return
-        if not self._names:
-            self.ui.meshStatusLabel.text = _(
-                "{count} faces, none of them named. The names are the boundary conditions' and "
-                "the results', and they come from SimVascular Mesh Prep.").format(count=len(measured))
-            self.ui.openMeshPrepButton.visible = True
-            self.populate()
+        self.ui.meshStatusLabel.text = self.namedFaces.describe()
+        self.ui.openMeshPrepButton.visible = not named or bool(self.namedFaces.unnamed)
+        if not named:
+            self.showConditions(None)
             return
-        unnamed = [face.face_id for face in measured if not self._names.get(face.face_id)]
-        self._caps = [(face.face_id, self._names[face.face_id], face) for face in measured
-                      if self._names.get(face.face_id) and Face(face.face_id, self._names[face.face_id]).is_cap]
-        walls = len(measured) - len(self._caps) - len(unnamed)
-        text = _("{caps} caps and {walls} wall face(s), named in SimVascular Mesh Prep.").format(
-            caps=len(self._caps), walls=walls)
-        if unnamed:
-            text += " " + _("Face(s) {faces} have no name and are left out; name them in Mesh "
-                            "Prep.").format(faces=", ".join(str(faceId) for faceId in unnamed))
-            self.ui.openMeshPrepButton.visible = True
-        self.ui.meshStatusLabel.text = text
-
-        capIds ={faceId for faceId, _name, _geometry in self._caps}
-        self._conditions = {faceId: condition for faceId, condition in bcs.from_json(
-            node.GetAttribute(BOUNDARY_CONDITIONS_ATTRIBUTE)).items() if faceId in capIds}
+        self.showConditions(node)
+        capIds = set(self.conditionsTable.capNames())
         try:
             saved = int(node.GetAttribute(INLET_FACE_ID_ATTRIBUTE) or "")
         except ValueError:
             saved = None
         self._inletFaceId = saved if saved in capIds else self.suggestedInlet()
-
         if not self.ui.caseDirectoryPathLineEdit.currentPath:
             self.ui.caseDirectoryPathLineEdit.currentPath = self.logic.suggestedCaseDirectory(node)
         self.populate()
         self.loadResultsFromCase()
 
-    def measure(self, node):
-        """The mesh's faces measured, and its boundary, kept until the mesh changes.
-
-        Kept because coming back to the panel reads the names again, which is cheap, and would
-        measure the faces again with them, which on a clinical volume mesh of a million cells is
-        not. The boundary is what the highlight is cut from.
-        """
-        key = (node.GetID(), node.GetMesh().GetMTime())
-        if self._measuredKey != key:
-            arrayName = faces.find_face_id_array(node.GetMesh())
-            self._measured = faces.measure_faces(node.GetMesh(), arrayName)
-            self._measuredBoundary = faces.boundary_of(node.GetMesh())
-            self._measuredArrayName = arrayName
-            self._measuredKey = key
-        self._arrayName, self._boundary = self._measuredArrayName, self._measuredBoundary
-        return self._measured
+    def showConditions(self, node):
+        self.conditionsTable.setMesh(node, self.namedFaces if node is not None else None)
+        self.populate()
 
     def suggestedInlet(self):
         """The largest cap given an inflow, or the largest cap: the inlet of most models.
@@ -465,9 +395,11 @@ class SimVascularROMWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         root -- but the largest is the trunk of the tree, and a tree drawn from its trunk is the
         one that reads as anatomy.
         """
-        inflows = [(geometry.area, faceId) for faceId, _name, geometry in self._caps
-                   if isinstance(self._conditions.get(faceId), bcs.Inflow)]
-        candidates = inflows or [(geometry.area, faceId) for faceId, _name, geometry in self._caps]
+        conditions = self.conditionsTable.conditions
+        caps = self.conditionsTable.caps
+        inflows = [(geometry.area, faceId) for faceId, _name, geometry in caps
+                   if isinstance(conditions.get(faceId), bcs.Inflow)]
+        candidates = inflows or [(geometry.area, faceId) for faceId, _name, geometry in caps]
         return max(candidates)[1] if candidates else None
 
     def onOpenMeshPrep(self):
@@ -476,238 +408,33 @@ class SimVascularROMWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         if mesh is not None:
             slicer.util.getModuleWidget("SimVascularMeshPrep").ui.inputMeshSelector.setCurrentNode(mesh)
 
-    # -- the table of conditions -----------------------------------------------------
+    # -- the source, and the table it is emphasised in -----------------------------------
     def capName(self, faceId):
-        return self._names.get(faceId, str(faceId))
-
-    def period(self):
-        return bcs.cycle_period(self._conditions.values())
+        return self.conditionsTable.capName(faceId)
 
     def populate(self):
+        caps = self.conditionsTable.caps
         self._updating = True
         try:
             self.ui.inletComboBox.clear()
-            for faceId, name, _geometry in self._caps:
+            for faceId, name, _geometry in caps:
                 self.ui.inletComboBox.addItem(name, faceId)
-            index = next((row for row, (faceId, _name, _geometry) in enumerate(self._caps)
-                          if faceId == self._inletFaceId), -1)
-            self.ui.inletComboBox.currentIndex = index
-
-            table = self.ui.facesTable
-            table.setRowCount(len(self._caps))
-            for row, (faceId, name, geometry) in enumerate(self._caps):
-                nameItem = table.item(row, NAME_COLUMN)
-                if nameItem is None:
-                    nameItem = qt.QTableWidgetItem()
-                    table.setItem(row, NAME_COLUMN, nameItem)
-                nameItem.setText(name)
-                nameItem.setFlags(qt.Qt.ItemIsEnabled | qt.Qt.ItemIsSelectable)
-                font = nameItem.font()
-                font.setBold(faceId == self._inletFaceId)
-                nameItem.setFont(font)
-                nameItem.setToolTip(_("The source: the centerlines start here.")
-                                    if faceId == self._inletFaceId else "")
-
-                combo = table.cellWidget(row, CONDITION_COLUMN)
-                if combo is None:
-                    combo = qt.QComboBox()
-                    for kind in KIND_CHOICES:
-                        combo.addItem(_(kind) if kind else NO_CONDITION_TEXT)
-                    combo.connect("currentIndexChanged(int)",
-                                  lambda index, combo=combo: self.onKindChanged(combo, index))
-                    table.setCellWidget(row, CONDITION_COLUMN, combo)
-                combo.setProperty("faceId", faceId)
-                combo.currentIndex = KIND_CHOICES.index(self.kindOf(faceId))
-                self.populateValues(row, faceId)
+            self.ui.inletComboBox.currentIndex = next(
+                (row for row, (faceId, _name, _geometry) in enumerate(caps)
+                 if faceId == self._inletFaceId), -1)
         finally:
             self._updating = False
-        self.updateHint()
-        self.updateButtons()
-
-    def kindOf(self, faceId):
-        """The kind shown for a face: its condition's, or the one chosen for what failed to read."""
-        if faceId in self._invalid:
-            return self._invalid[faceId][0]
-        condition = self._conditions.get(faceId)
-        return condition.kind if condition is not None else None
-
-    def populateValues(self, row, faceId):
-        table = self.ui.facesTable
-        item = table.item(row, VALUES_COLUMN)
-        if item is None:
-            item = qt.QTableWidgetItem()
-            table.setItem(row, VALUES_COLUMN, item)
-        if faceId in self._invalid:
-            _kind, text, reason = self._invalid[faceId]
-            item.setText(text)
-            item.setForeground(qt.QBrush(INVALID_VALUES_COLOR))
-            item.setToolTip(reason)
-        else:
-            text = bcs.to_text(self._conditions.get(faceId))
-            item.setText(text)
-            item.setForeground(qt.QBrush())
-            # The text as well as the hint: a waveform's path is often longer than the column.
-            hint = self.hintFor(self.kindOf(faceId))
-            item.setToolTip(f"{text}\n{hint}" if text else hint)
-        editable = self.kindOf(faceId) is not None
-        item.setFlags(qt.Qt.ItemIsEnabled | qt.Qt.ItemIsSelectable
-                      | (qt.Qt.ItemIsEditable if editable else 0))
-
-    def rowOf(self, faceId):
-        return next((row for row, (capId, _name, _geometry) in enumerate(self._caps)
-                     if capId == faceId), None)
-
-    def onKindChanged(self, combo, index):
-        """A cap given another kind of condition: what was typed is read again as the new kind.
-
-        So that a resistance turned into an RCR keeps its resistance as Rp, where the numbers
-        allow it, and a value that does not fit the new kind is shown in red rather than dropped.
-        """
-        if self._updating:
-            return
-        faceId = int(combo.property("faceId"))
-        kind = KIND_CHOICES[index]
-        row = self.rowOf(faceId)
-        previous = self._conditions.get(faceId)
-        self._invalid.pop(faceId, None)
-        if kind is None:
-            self._conditions.pop(faceId, None)
-        elif previous is None or previous.kind != kind:
-            text = self.ui.facesTable.item(row, VALUES_COLUMN).text() if row is not None else ""
-            if isinstance(previous, bcs.Inflow) and not previous.is_steady:
-                text = ""
-            self.setFromText(faceId, kind, text)
-        self.saveConditions()
-        self._updating = True
-        try:
-            if row is not None:
-                self.populateValues(row, faceId)
-        finally:
-            self._updating = False
-        self.updateHint()
-        self.updateButtons()
-
-    def setFromText(self, faceId, kind, text):
-        try:
-            condition = bcs.from_text(kind, text, self._conditions.get(faceId), self.period())
-        except bcs.BoundaryConditionError as error:
-            self._conditions.pop(faceId, None)
-            self._invalid[faceId] = (kind, text, str(error))
-            return
-        self._invalid.pop(faceId, None)
-        if condition is None:
-            self._conditions.pop(faceId, None)
-            if kind is not None:
-                # Chosen but not yet given values: keep the choice visible.
-                self._invalid[faceId] = (kind, "", self.hintFor(kind))
-        else:
-            self._conditions[faceId] = condition
-
-    def onValuesEdited(self, row, column):
-        if self._updating or column != VALUES_COLUMN or row >= len(self._caps):
-            return
-        faceId = self._caps[row][0]
-        kind = KIND_CHOICES[self.ui.facesTable.cellWidget(row, CONDITION_COLUMN).currentIndex]
-        if kind is None:
-            return
-        self.setFromText(faceId, kind, self.ui.facesTable.item(row, column).text())
-        self.saveConditions()
-        self._updating = True
-        try:
-            self.populateValues(row, faceId)
-        finally:
-            self._updating = False
+        self.conditionsTable.emphasised = self._inletFaceId
+        self.conditionsTable.populate()
         self.updateButtons()
 
     def onInletChanged(self, index):
-        if self._updating or index < 0 or index >= len(self._caps):
+        caps = self.conditionsTable.caps
+        if self._updating or index < 0 or index >= len(caps):
             return
-        self._inletFaceId = self._caps[index][0]
-        self.saveConditions()
+        self._inletFaceId = caps[index][0]
+        self.saveInlet()
         self.populate()
-
-    def selectedFaceIds(self):
-        rows = sorted({index.row() for index in self.ui.facesTable.selectedIndexes()})
-        return [self._caps[row][0] for row in rows if row < len(self._caps)]
-
-    def onFaceSelectionChanged(self):
-        selected = self.selectedFaceIds()
-        node = self.ui.inputMeshSelector.currentNode()
-        if selected and node is not None and node.GetMesh() is not None:
-            self.logic.highlight(node.GetMesh(), selected[0], self._arrayName, self._boundary)
-        else:
-            self.logic.clearHighlight()
-        self.updateHint()
-        self.plotSelected()
-
-    @staticmethod
-    def hintFor(kind):
-        if kind == bcs.INFLOW:
-            return _("Inflow: double-click the values to load a waveform from a .flow file, or "
-                     "select them and type a steady flow Q in mL/s.")
-        if kind == bcs.RCR_KIND:
-            return _("RCR: Rp, C, Rd, Pd -- proximal resistance, compliance, distal resistance, "
-                     "distal pressure (may be left out, and is then 0).")
-        if kind == bcs.RESISTANCE_KIND:
-            return _("Resistance: R, Pd -- resistance and distal pressure (may be left out, and "
-                     "is then 0).")
-        return _("Choose a kind of condition for the cap first.")
-
-    def updateHint(self):
-        selected = self.selectedFaceIds()
-        self.ui.valuesHintLabel.text = self.hintFor(self.kindOf(selected[0])) if selected else ""
-
-    # -- a waveform, by double-clicking an inflow's values ---------------------------------
-    def onCellDoubleClicked(self, row, column):
-        """Ask for a waveform file on an inflow's values; open any other values for typing.
-
-        The values of an inflow are a waveform, which nobody types: it comes from a file, so the
-        gesture that would open the cell asks for the file instead. A steady inflow is still
-        typed, by selecting the cell and typing the flow, which opens the editor without a
-        double-click.
-        """
-        if column != VALUES_COLUMN or row >= len(self._caps):
-            return
-        faceId = self._caps[row][0]
-        kind = self.kindOf(faceId)
-        if kind == bcs.INFLOW:
-            path = self.chooseWaveformFile(faceId)
-            if not path:
-                return
-            with slicer.util.tryWithErrorDisplay(_("Could not read the waveform."), waitCursor=True):
-                self.setStatus(self.loadWaveform(path, faceId))
-        elif kind is not None:
-            self.ui.facesTable.editItem(self.ui.facesTable.item(row, column))
-
-    def chooseWaveformFile(self, faceId):
-        """The file a cap's waveform is to be read from, or "" if none was chosen.
-
-        Opened where the last waveform came from, since a case's waveforms are usually kept
-        together, and a Fontan has seven of them to load one after another.
-        """
-        directory = (qt.QSettings().value(WAVEFORM_DIRECTORY_SETTING, "")
-                     or self.ui.caseDirectoryPathLineEdit.currentPath)
-        path = qt.QFileDialog.getOpenFileName(
-            slicer.util.mainWindow(), _("Inflow waveform for {name}").format(name=self.capName(faceId)),
-            directory, _("Flow files (*.flow *.dat *.txt *.csv);;All files (*)"))
-        if path:
-            qt.QSettings().setValue(WAVEFORM_DIRECTORY_SETTING, os.path.dirname(path))
-        return path
-
-    def loadWaveform(self, path, faceId):
-        """Give a cap the waveform in a file, saying so if it had to be turned round."""
-        waveform, turned = bcs.as_inflow(bcs.read_flow_file(path))
-        self._conditions[faceId] = waveform
-        self._invalid.pop(faceId, None)
-        self.saveConditions()
-        self.populate()
-        note = _("{name}: {points} points over {period:g} s, mean {mean:.4g} mL/s.").format(
-            name=self.capName(faceId), points=len(waveform.time), period=waveform.period,
-            mean=waveform.mean)
-        if turned:
-            note += " " + _("Its flows were negative, as svMultiPhysics writes an inflow, and have "
-                            "been turned round: here an inflow is positive.")
-        return note
 
     # -- centerlines and the run ---------------------------------------------------------
     def caseDirectory(self):
@@ -721,7 +448,7 @@ class SimVascularROMWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         node = self.ui.inputMeshSelector.currentNode()
         return (node.GetID(), node.GetMesh().GetMTime(), self._inletFaceId,
                 os.path.abspath(self.ui.caseDirectoryPathLineEdit.currentPath or ""),
-                json.dumps(sorted(self._names.items())))
+                json.dumps(sorted(self.namedFaces.names.items())))
 
     def onComputeCenterlines(self):
         with slicer.util.tryWithErrorDisplay(_("Centerlines could not be computed."), waitCursor=True):
@@ -730,14 +457,14 @@ class SimVascularROMWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
     def computeCenterlines(self):
         """Write the faces into the case, and trace and split the centerlines from the inlet."""
         node = self.ui.inputMeshSelector.currentNode()
-        if node is None or not self._caps:
+        if node is None or not self.conditionsTable.caps:
             raise RuntimeError(_("Select a mesh whose faces are named first."))
         if self._inletFaceId is None:
             raise RuntimeError(_("Choose the source the centerlines start from."))
         directory = self.caseDirectory()
         self.logic.importRomPackage(self.ui.romPackagePathLineEdit.currentPath)
         started = time.time()
-        case.write_surfaces(node.GetMesh(), self._names, directory, self._arrayName)
+        case.write_surfaces(node.GetMesh(), self.namedFaces.names, directory, self.namedFaces.arrayName)
         centerlines = case.compute_centerlines(directory, self._inletFaceId)
         self._centerlinesKey = self.centerlinesKey()
         self.logic.showCenterlines(node, centerlines.geometry)
@@ -765,15 +492,15 @@ class SimVascularROMWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
             self.setStatus(self.createSolverFiles())
 
     def checkConditions(self):
-        capNames = {faceId: name for faceId, name, _geometry in self._caps}
-        found = bcs.problems(self._conditions, capNames, self._inletFaceId)
+        capNames = self.conditionsTable.capNames()
+        found = bcs.problems(self.conditionsTable.conditions, capNames, self._inletFaceId)
         if found:
             raise RuntimeError(" ".join(found))
         return capNames
 
     def solverFilesKey(self):
         node = self.ui.inputMeshSelector.currentNode()
-        return (self.centerlinesKey(), bcs.to_json(self._conditions), self.simulationParameters(),
+        return (self.centerlinesKey(), bcs.to_json(self.conditionsTable.conditions), self.simulationParameters(),
                 node.GetName())
 
     def createSolverFiles(self):
@@ -791,8 +518,7 @@ class SimVascularROMWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         self.logic.importRomPackage(self.ui.romPackagePathLineEdit.currentPath)
         if self._centerlinesKey != self.centerlinesKey() or case.read_centerlines(directory) is None:
             self.computeCenterlines()
-        byName = {capNames[faceId]: condition for faceId, condition in self._conditions.items()
-                  if faceId in capNames}
+        byName = self.conditionsTable.conditionsByName()
         config = case.write_solver_input(directory, byName, self._inletFaceId,
                                          capNames[self._inletFaceId], self.simulationParameters(),
                                          sanitized(node.GetName()) or "model")
@@ -889,7 +615,7 @@ class SimVascularROMWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         if node is None or not self._faceResults:
             return
         solved = {face.name for face in self._faceResults}
-        names = [self.capName(faceId) for faceId in self.selectedFaceIds()
+        names = [self.capName(faceId) for faceId in self.conditionsTable.selectedFaceIds()
                  if self.capName(faceId) in solved]
         if not names and self.capName(self._inletFaceId) in solved:
             names = [self.capName(self._inletFaceId)]
@@ -944,10 +670,13 @@ class SimVascularROMWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
 
     # -- panel state -----------------------------------------------------------------------
     def updateButtons(self):
-        capNames = {faceId: name for faceId, name, _geometry in self._caps}
-        found = bcs.problems(self._conditions, capNames, self._inletFaceId) if self._caps else []
-        ready = bool(self._caps) and not found and bool(self.ui.caseDirectoryPathLineEdit.currentPath)
-        self.ui.computeCenterlinesButton.enabled = bool(self._caps) and self._inletFaceId is not None
+        if self.conditionsTable is None:
+            return
+        caps = self.conditionsTable.caps
+        found = (bcs.problems(self.conditionsTable.conditions, self.conditionsTable.capNames(),
+                              self._inletFaceId) if caps else [])
+        ready = bool(caps) and not found and bool(self.ui.caseDirectoryPathLineEdit.currentPath)
+        self.ui.computeCenterlinesButton.enabled = bool(caps) and self._inletFaceId is not None
         self.ui.createSolverFilesButton.enabled = ready
         self.ui.runButton.enabled = ready
         notReady = " ".join(found) or _("Choose an output folder.")
@@ -960,7 +689,7 @@ class SimVascularROMWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
             _("Run svZeroDSolver on the solver files and show the results. The files are created "
               "first if they are not there, or the panel has changed since they were.")
             if ready else notReady)
-        if self._caps and not self._faceResults:
+        if caps and not self._faceResults:
             self.setStatus(" ".join(found) if found else _("Ready to run."), warning=bool(found))
 
     def setStatus(self, text, warning=False):
@@ -973,25 +702,6 @@ class SimVascularROMLogic(ScriptedLoadableModuleLogic):
 
     def __init__(self):
         ScriptedLoadableModuleLogic.__init__(self)
-
-    @staticmethod
-    def faceNames(meshNode):
-        """`{face id: name}` as SimVascular Mesh Prep saved them on the mesh, or {}."""
-        text = meshNode.GetAttribute(FACE_NAMES_ATTRIBUTE) if meshNode is not None else None
-        if not text:
-            return {}
-        try:
-            stored = json.loads(text)
-        except ValueError:
-            logging.warning("SimVascular ROM could not read the face names on %s.", meshNode.GetName())
-            return {}
-        names = {}
-        for faceId, name in stored.items():
-            try:
-                names[int(faceId)] = str(name)
-            except (TypeError, ValueError):
-                continue
-        return names
 
     @staticmethod
     def importRomPackage(checkout=""):
@@ -1029,20 +739,6 @@ class SimVascularROMLogic(ScriptedLoadableModuleLogic):
         if not os.path.isdir(directory):
             return ""
         return os.path.join(directory, "rom", sanitized(meshNode.GetName()) or "model")
-
-    # -- the highlight, which is Mesh Prep's ------------------------------------------
-    @staticmethod
-    def highlight(mesh, faceId, arrayName, boundary=None):
-        from SimVascularMeshPrep import SimVascularMeshPrepLogic
-        SimVascularMeshPrepLogic().highlight(mesh, faceId, arrayName or "", boundary=boundary)
-
-    @staticmethod
-    def clearHighlight():
-        try:
-            from SimVascularMeshPrep import SimVascularMeshPrepLogic
-        except ImportError:
-            return
-        SimVascularMeshPrepLogic.clearHighlight()
 
     # -- nodes a run leaves --------------------------------------------------------------
     @staticmethod
@@ -1231,8 +927,8 @@ class SimVascularROMTest(ScriptedLoadableModuleTest):
         return widget
 
     def typeCondition(self, widget, faceId, kind, text):
-        row = widget.rowOf(faceId)
-        widget.ui.facesTable.cellWidget(row, CONDITION_COLUMN).currentIndex = KIND_CHOICES.index(kind)
+        row = widget.conditionsTable.rowOf(faceId)
+        widget.ui.facesTable.cellWidget(row, TYPE_COLUMN).currentIndex = KIND_CHOICES.index(kind)
         widget.ui.facesTable.item(row, VALUES_COLUMN).setText(text)
 
     def test_conditionsAreKeptOnTheMeshTheyAreFor(self):
@@ -1242,23 +938,23 @@ class SimVascularROMTest(ScriptedLoadableModuleTest):
         widget = self.widget()
         first, second = self.namedY("first"), self.namedY("second")
         widget.ui.inputMeshSelector.setCurrentNode(first)
-        self.assertEqual([faceId for faceId, _name, _geometry in widget._caps],
+        self.assertEqual([faceId for faceId, _name, _geometry in widget.conditionsTable.caps],
                          [testing.INLET_ID, testing.RIGHT_ID, testing.LEFT_ID])
         self.assertEqual(widget._inletFaceId, testing.INLET_ID, "the largest cap is the inlet")
         self.typeCondition(widget, testing.RIGHT_ID, bcs.RESISTANCE_KIND, "1500")
-        self.assertEqual(widget._conditions[testing.RIGHT_ID], bcs.Resistance(1500.0))
+        self.assertEqual(widget.conditionsTable.conditions[testing.RIGHT_ID], bcs.Resistance(1500.0))
 
         widget.ui.inputMeshSelector.setCurrentNode(second)
-        self.assertEqual(widget._conditions, {}, "a condition set on one anatomy is not on another")
+        self.assertEqual(widget.conditionsTable.conditions, {}, "a condition set on one anatomy is not on another")
         widget.ui.inputMeshSelector.setCurrentNode(first)
-        self.assertEqual(widget._conditions, {testing.RIGHT_ID: bcs.Resistance(1500.0)})
+        self.assertEqual(widget.conditionsTable.conditions, {testing.RIGHT_ID: bcs.Resistance(1500.0)})
         self.assertEqual(bcs.from_json(first.GetAttribute(BOUNDARY_CONDITIONS_ATTRIBUTE)),
                          {testing.RIGHT_ID: bcs.Resistance(1500.0)})
 
         # What cannot be read stays on screen, in red, and is not a condition.
         self.typeCondition(widget, testing.LEFT_ID, bcs.RCR_KIND, "1, 2")
-        self.assertNotIn(testing.LEFT_ID, widget._conditions)
-        item = widget.ui.facesTable.item(widget.rowOf(testing.LEFT_ID), VALUES_COLUMN)
+        self.assertNotIn(testing.LEFT_ID, widget.conditionsTable.conditions)
+        item = widget.ui.facesTable.item(widget.conditionsTable.rowOf(testing.LEFT_ID), VALUES_COLUMN)
         self.assertEqual(item.text(), "1, 2")
         self.assertEqual(item.foreground().color().red(), INVALID_VALUES_COLOR.red())
         self.assertFalse(widget.ui.runButton.enabled)
@@ -1283,20 +979,20 @@ class SimVascularROMTest(ScriptedLoadableModuleTest):
         with open(path, "w") as handle:
             handle.write("0.0 -5.0\n0.4 -15.0\n0.8 -5.0\n")
         asked = []
-        widget.chooseWaveformFile = lambda faceId: asked.append(faceId) or path
+        widget.conditionsTable.chooseWaveformFile = lambda faceId: asked.append(faceId) or path
         try:
             self.typeCondition(widget, testing.INLET_ID, bcs.INFLOW, "")
-            widget.onCellDoubleClicked(widget.rowOf(testing.INLET_ID), VALUES_COLUMN)
+            widget.conditionsTable.onCellDoubleClicked(widget.conditionsTable.rowOf(testing.INLET_ID), VALUES_COLUMN)
             self.assertEqual(asked, [testing.INLET_ID])
-            self.assertEqual(widget._conditions[testing.INLET_ID],
+            self.assertEqual(widget.conditionsTable.conditions[testing.INLET_ID],
                              bcs.Inflow((0.0, 0.4, 0.8), (5.0, 15.0, 5.0)))
             self.assertIn("turned round", widget.ui.statusLabel.text)
-            self.assertEqual(table.item(widget.rowOf(testing.INLET_ID), VALUES_COLUMN).text(),
+            self.assertEqual(table.item(widget.conditionsTable.rowOf(testing.INLET_ID), VALUES_COLUMN).text(),
                              os.path.realpath(path), "the cell names the file the waveform came from")
 
             # Anywhere else a double-click opens the values for typing and asks for no file.
             self.typeCondition(widget, testing.RIGHT_ID, bcs.RCR_KIND, "100, 1e-4, 1000")
-            widget.onCellDoubleClicked(widget.rowOf(testing.RIGHT_ID), VALUES_COLUMN)
+            widget.conditionsTable.onCellDoubleClicked(widget.conditionsTable.rowOf(testing.RIGHT_ID), VALUES_COLUMN)
             self.assertEqual(asked, [testing.INLET_ID])
             self.assertEqual(table.state(), qt.QAbstractItemView.EditingState)
             # Closed with Escape, as a person would close it. Not with reset(), which closes
@@ -1306,12 +1002,12 @@ class SimVascularROMTest(ScriptedLoadableModuleTest):
                 qt.QApplication.sendEvent(editor, qt.QKeyEvent(qt.QEvent.KeyPress, qt.Qt.Key_Escape,
                                                                qt.Qt.NoModifier))
             self.assertNotEqual(table.state(), qt.QAbstractItemView.EditingState)
-            self.assertIsNotNone(table.cellWidget(widget.rowOf(testing.RIGHT_ID), CONDITION_COLUMN))
+            self.assertIsNotNone(table.cellWidget(widget.conditionsTable.rowOf(testing.RIGHT_ID), TYPE_COLUMN))
             # And a cap with no kind yet is left alone.
-            widget.onCellDoubleClicked(widget.rowOf(testing.LEFT_ID), VALUES_COLUMN)
+            widget.conditionsTable.onCellDoubleClicked(widget.conditionsTable.rowOf(testing.LEFT_ID), VALUES_COLUMN)
             self.assertEqual(asked, [testing.INLET_ID])
         finally:
-            del widget.chooseWaveformFile
+            del widget.conditionsTable.chooseWaveformFile
         self.delayDisplay("Double-clicking an inflow loads its waveform")
 
     def test_aMeshWithoutNamesIsSentToMeshPrep(self):
@@ -1321,7 +1017,7 @@ class SimVascularROMTest(ScriptedLoadableModuleTest):
         node = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLModelNode", "unnamed")
         node.SetAndObserveMesh(testing.cube_mesh())
         widget.ui.inputMeshSelector.setCurrentNode(node)
-        self.assertEqual(widget._caps, [])
+        self.assertEqual(widget.conditionsTable.caps, [])
         self.assertFalse(widget.ui.openMeshPrepButton.isHidden())
         self.assertIn("Mesh Prep", widget.ui.meshStatusLabel.text)
         self.delayDisplay("An unnamed mesh is sent to Mesh Prep")
@@ -1365,7 +1061,7 @@ class SimVascularROMTest(ScriptedLoadableModuleTest):
         self.assertIsNotNone(table.GetColumnByName("cap_right pressure [mmHg]"))
 
         # Selecting a cap in the conditions table plots it, and the export holds every cap.
-        widget.ui.facesTable.selectRow(widget.rowOf(testing.RIGHT_ID))
+        widget.ui.facesTable.selectRow(widget.conditionsTable.rowOf(testing.RIGHT_ID))
         chart = node.GetNodeReference(RESULTS_CHART_REFERENCE)
         self.assertEqual(chart.GetNthPlotSeriesNode(0).GetYColumnName(), "cap_right pressure [mmHg]")
         self.assertTrue(widget.ui.exportButton.enabled)

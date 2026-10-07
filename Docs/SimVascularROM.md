@@ -38,7 +38,9 @@ can be opened on the same model from the panel.
      change the condition.
    - **RCR**: double-click and type `Rp, C, Rd, Pd`, i.e. proximal resistance, compliance,
      distal resistance and distal pressure. `Pd` can be left out, and is then 0.
-   - **Resistance**: double-click and type `R, Pd`.
+   - **Resistance**: double-click and type `R`. A resistance drains to zero pressure and has no
+     distal pressure, as svMultiPhysics' Resistance condition has none and the same conditions
+     are written for the 3D solver; an outlet that needs a pressure to drain to is an RCR.
 
    Values are in cgs units: flow in mL/s, resistance in dyn·s/cm⁵, compliance in cm⁵/dyn,
    pressure in dyn/cm² (1 mmHg = 1333.22 dyn/cm²). A value that cannot be read is shown in
@@ -71,7 +73,9 @@ can be opened on the same model from the panel.
    graph in your browser, with every block's parameters and results a click away.
 
 The conditions and the source are saved on the mesh, so they come back when you reopen the
-scene, and two anatomies in one scene keep separate conditions. An output folder that already
+scene, and two anatomies in one scene keep separate conditions. The conditions are shared with
+[SimVascular MultiPhysics](SimVascularMultiPhysics.md): set in either panel, they are the ones
+both write, so a 0D model tuned here is the 3D case written there. An output folder that already
 holds results shows them again when the mesh is selected.
 
 ### What gets written

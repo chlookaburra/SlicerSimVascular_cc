@@ -1,23 +1,17 @@
 #-----------------------------------------------------------------------------
-set(MODULE_NAME SimVascularROM)
+set(MODULE_NAME SimVascularMultiPhysics)
 
 #-----------------------------------------------------------------------------
-# `svromsetup` does the work; this module is an MRML adapter over it. Listing the package's files
+# `svmpsetup` does the work; this module is an MRML adapter over it. Listing the package's files
 # here installs them beside the module, which is already on Slicer's Python path, as Mesh Prep
-# does with `svmeshcomplete`. `sv_rom_simulation` is not listed: it is a package of its own,
-# found where it is installed or where the panel's Tools section says a checkout is.
+# does with `svmeshcomplete`. The conditions and the table they are set in are SimVascular ROM
+# Simulation's, imported from beside that module, which this one depends on.
 set(MODULE_PYTHON_SCRIPTS
   ${MODULE_NAME}.py
-  # The faces and the conditions table SimVascular MultiPhysics shares with this panel.
-  ${MODULE_NAME}Lib/__init__.py
-  ${MODULE_NAME}Lib/BoundaryConditionsTable.py
-  svromsetup/__init__.py
-  svromsetup/boundary_conditions.py
-  svromsetup/case.py
-  svromsetup/results.py
-  svromsetup/solver.py
-  svromsetup/testing.py
-  svromsetup/visualization.py
+  svmpsetup/__init__.py
+  svmpsetup/case.py
+  svmpsetup/settings.py
+  svmpsetup/solver_xml.py
   )
 
 set(MODULE_PYTHON_RESOURCES

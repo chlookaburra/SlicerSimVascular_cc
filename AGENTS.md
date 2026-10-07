@@ -1,20 +1,28 @@
 # Notes for coding agents
 
-3D Slicer extension holding the SimVascular modules the Marsden lab develops. Five scripted
+3D Slicer extension holding the SimVascular modules the Marsden lab develops. Six scripted
 modules, registered in `CMakeLists.txt`: `SDFStent`, `PaintModel`, `FaceAwareRemesh`,
-`SimVascularMeshPrep`, `SimVascularROM`. Each has a page under `Docs/`, linked from `README.md`.
+`SimVascularMeshPrep`, `SimVascularROM`, `SimVascularMultiPhysics`. Each has a page under
+`Docs/`, linked from `README.md`.
 
 Paths below are relative to the repository root. The last section covers optional local
 tooling, and says where it is assumed to live.
 
 ## The layout that matters
 
-`FaceAwareRemesh`, `SimVascularMeshPrep` and `SimVascularROM` each split in two:
+`FaceAwareRemesh`, `SimVascularMeshPrep`, `SimVascularROM` and `SimVascularMultiPhysics` each
+split in two:
 
-- **The scripted module** (`FaceAwareRemesh.py`, `SimVascularMeshPrep.py`, `SimVascularROM.py`)
-  — an MRML adapter. It reads the selected node, calls the package, puts the answer in the panel.
-- **A package beside it** (`svremesh/`, `svmeshcomplete/`, `svromsetup/`) — the actual work,
-  with its own `pyproject.toml` and `LICENSE.txt`, pip-installable on its own.
+- **The scripted module** (`FaceAwareRemesh.py`, `SimVascularMeshPrep.py`, `SimVascularROM.py`,
+  `SimVascularMultiPhysics.py`) — an MRML adapter. It reads the selected node, calls the
+  package, puts the answer in the panel.
+- **A package beside it** (`svremesh/`, `svmeshcomplete/`, `svromsetup/`, `svmpsetup/`) — the
+  actual work, with its own `pyproject.toml` and `LICENSE.txt`, pip-installable on its own.
+
+**The ROM and MultiPhysics panels share one set of boundary conditions per mesh**, kept on the
+mesh node, and one table to edit them in: `SimVascularROM/SimVascularROMLib/BoundaryConditionsTable.py`,
+which both import. Change the table there, never by copying it into the other panel. The
+conditions themselves are `svromsetup.boundary_conditions`, which `svmpsetup` imports.
 
 **The packages import no `slicer`, no `sv`, no VMTK — only VTK and numpy.** That is the point of
 the split: a workflow packaging cases from a terminal calls the same functions and gets the same
@@ -54,6 +62,13 @@ to run them all:
 ```sh
 cd SimVascularROM && SV_ROM_SIMULATION_PATH=/path/to/svROMSimulation \
   SVZERODSOLVER=/path/to/svzerodsolver python -m pytest
+```
+
+**svmpsetup** — pytest; one test runs svMultiPhysics for two time steps on a cube, and skips
+itself unless the solver is at `SVMULTIPHYSICS` or on the PATH:
+
+```sh
+cd SimVascularMultiPhysics && SVMULTIPHYSICS=/path/to/svmultiphysics python -m pytest
 ```
 
 None of the suites is wired into CTest yet: the `Testing/CMakeLists.txt` files only recurse, and
