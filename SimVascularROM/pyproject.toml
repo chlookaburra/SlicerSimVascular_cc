@@ -24,9 +24,9 @@ classifiers = [
 dependencies = ["numpy", "vtk", "svmeshcomplete"]
 
 [project.optional-dependencies]
-# What the centerlines and the solver input need. Not a hard dependency: sv_rom_simulation brings
-# VMTK, and pip's VMTK pins a VTK of its own, which must not be installed over Slicer's.
-rom = ["sv_rom_simulation"]
+# What the centerlines and the solver input need. Not a hard dependency: svromutils brings VMTK,
+# and pip's VMTK pins a VTK of its own, which must not be installed over Slicer's.
+rom = ["svromutils"]
 
 [project.urls]
 Homepage = "https://github.com/SimVascular/SlicerSimVascular"

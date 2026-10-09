@@ -1,6 +1,6 @@
-"""The case folder a 0D simulation is set up and run in, written through `sv_rom_simulation`.
+"""The case folder a 0D simulation is set up and run in, written through `svromutils`.
 
-`sv_rom_simulation` turns a surface whose faces carry a `ModelFaceID` into an svZeroDSolver
+`svromutils` (on PyPI; svReducedOrderModelingUtils) turns a surface whose faces carry a `ModelFaceID` into an svZeroDSolver
 input file: centerlines from VMTK, split into branches, each branch a chain of vessels whose
 resistance, inductance and capacitance come from the centerline's section areas, and the
 caps' boundary conditions at the ends. What it reads is files -- the surface, the face files,
@@ -24,9 +24,9 @@ The face files are the same `mesh-complete` folder a 3D case of the same mesh us
 and a 3D simulation of one anatomy name every face the same way, and the 0D one can be kept
 beside the other.
 
-`sv_rom_simulation` is imported where it is called rather than at the top, because it imports
-VMTK and VMTK is not a dependency of anything else here: under Slicer it is SlicerVMTK's, and
-the panel has to make it importable first.
+`svromutils` is imported where it is called rather than at the top, because it imports VMTK and
+VMTK is not a dependency of anything else here: under Slicer it is SlicerVMTK's, and the panel
+has to make it importable first.
 """
 
 from __future__ import annotations
@@ -59,7 +59,7 @@ INFLOW_NAME = "inflow.flow"
 SOLVER_INPUT_NAME = "solver_0d.json"
 RESULTS_NAME = "results.csv"
 
-# SimVascular's names for its boundary condition files; `sv_rom_simulation` picks the kind of
+# SimVascular's names for its boundary condition files; `svromutils` picks the kind of
 # condition by which of them it is given.
 RCR_FILE_NAME = "rcrt.dat"
 RESISTANCE_FILE_NAME = "resistance.dat"
@@ -68,9 +68,6 @@ FLOW_LIST_FILE_NAME = "flow.dat"
 # The name the package gives the inlet's condition. Every other one is named after its face.
 INLET_BC_NAME = "INFLOW"
 
-# The package's logger, which is where it says why it stopped: it returns an empty string
-# rather than raising when its parameters are wrong.
-PACKAGE_LOGGER = "generate-1d-mesh"
 
 
 class CaseError(RuntimeError):
@@ -178,8 +175,8 @@ def compute_centerlines(case_dir, inlet_face_id: int) -> Centerlines:
     and pairs each centerline end with its face by where it is -- see
     `Centerlines.name_outlets` there.
     """
-    from sv_rom_simulation.generate_1d_mesh import compute_centerlines as package_centerlines
-    from sv_rom_simulation.parameters import Parameters
+    from svromutils.create_solver_file import compute_centerlines as package_centerlines
+    from svromutils.parameters import Parameters
 
     surface, faces_dir = surface_paths(case_dir)
     if not surface.is_file():
@@ -267,7 +264,7 @@ def write_solver_input(case_dir, conditions_by_name, inlet_face_id: int, inlet_n
     ends are (the package does this when it is given the surface and the inlet), so that a
     rename since they were computed does not leave the outlets paired with the old names.
     """
-    from sv_rom_simulation.generate_1d_mesh import create_solver_file
+    from svromutils.create_solver_file import create_solver_file
 
     case_dir = Path(case_dir)
     centerlines = case_dir / CENTERLINES_NAME
@@ -364,7 +361,13 @@ def _package_errors(what: str):
     It reports a bad parameter by logging it and returning nothing, and a bad geometry by
     raising, so both have to be caught to say anything useful.
     """
-    logger = logging.getLogger(PACKAGE_LOGGER)
+    # The package's own logger, which is where it says why it stopped: it returns an empty string
+    # rather than raising when its parameters are wrong. Asked of the package rather than named
+    # here, because the name has changed with the package before (generate-1d-mesh, when it was
+    # sv_rom_simulation), and a handler on a logger nothing writes to collects nothing quietly.
+    from svromutils.manage import get_logger_name
+
+    logger = logging.getLogger(get_logger_name())
     handler = _Collect()
     logger.addHandler(handler)
     try:

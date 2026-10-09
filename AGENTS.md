@@ -29,11 +29,14 @@ the split: a workflow packaging cases from a terminal calls the same functions a
 answer, and the tests need neither Slicer nor a mesher. Keep it that way. If a change needs
 MRML, it belongs in the module file, not the package.
 
-The one deliberate exception is `svromsetup.case`, which calls `sv_rom_simulation` (an external
-package, which imports VMTK) — imported inside the two functions that use it, never at the top,
-so the rest of `svromsetup` and its tests still need only VTK and numpy. Under Slicer, VMTK is
-SlicerVMTK's, assembled into a `vmtk.vtkvmtk` module by `SimVascularROM.ensureVmtk`; **never
-pip-install `vmtk` into Slicer**, since it pins a VTK of its own. `Docs/SimVascularROM.md` says why.
+The one deliberate exception is `svromsetup.case`, which calls `svromutils` (on PyPI; it imports
+VMTK) — imported inside the two functions that use it, never at the top, so the rest of
+`svromsetup` and its tests still need only VTK and numpy. Under Slicer, VMTK is SlicerVMTK's,
+assembled into a `vmtk.vtkvmtk` module by `SimVascularROM.ensureVmtk`; **never pip-install
+`vmtk` into Slicer**, since it pins a VTK of its own. The panel installs `svromutils` itself, with
+`skip_packages` for `vmtk`, `vtk`, `numpy` and `scipy` — its declared floors would replace
+Slicer's own — so never `pip_install("svromutils")` with its dependencies either.
+`Docs/SimVascularROM.md` says why.
 
 `SDFStent` and `PaintModel` predate that pattern and don't follow it.
 
@@ -56,12 +59,11 @@ cd SimVascularMeshPrep && python -m pytest
 ```
 
 **svromsetup** — pytest; 26 tests with numpy and VTK alone, the rest skip unless
-`sv_rom_simulation` (with VMTK) and `svzerodsolver` are found. Point at a checkout and a solver
-to run them all:
+`svromutils` (with VMTK) and `svzerodsolver` are found. `pip install svromutils` into the test
+environment — outside Slicer its VMTK and VTK are fine — and point at a solver to run them all:
 
 ```sh
-cd SimVascularROM && SV_ROM_SIMULATION_PATH=/path/to/svROMSimulation \
-  SVZERODSOLVER=/path/to/svzerodsolver python -m pytest
+cd SimVascularROM && SVZERODSOLVER=/path/to/svzerodsolver python -m pytest
 ```
 
 **svmpsetup** — pytest; one test runs svMultiPhysics for two time steps on a cube, and skips

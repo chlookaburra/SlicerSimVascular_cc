@@ -25,12 +25,15 @@ case/
 ## Outside Slicer
 
 The setting up is [`svromsetup/`](svromsetup), which imports numpy, VTK and `svmeshcomplete`,
-and imports `sv_rom_simulation` only where it is called:
+and imports [`svromutils`](https://pypi.org/project/svromutils/) only where it is called:
 
 ```bash
-python -m pip install -e ../SimVascularMeshPrep -e .
-SV_ROM_SIMULATION_PATH=~/Documents/svROMSimulation python -m pytest
+python -m pip install -e ../SimVascularMeshPrep -e ".[rom]"
+python -m pytest
 ```
+
+Under Slicer, the panel installs `svromutils` itself, the first time it is needed, without the
+VMTK, VTK, numpy and scipy it asks for. Slicer has its own of each, and pip's would replace them.
 
 ## Full documentation
 

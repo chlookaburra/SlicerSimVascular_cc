@@ -170,10 +170,10 @@ def test_a_flow_file_round_trips_and_a_negative_one_is_turned_round_and_said_to_
 
 
 def test_the_package_reads_the_files_as_they_are_written(tmp_path):
-    """The files are written for `sv_rom_simulation` to read, so its own reader is the judge."""
+    """The files are written for `svromutils` to read, so its own reader is the judge."""
     pytest.importorskip("vmtk")
-    io_1d = pytest.importorskip("sv_rom_simulation.io_1d")
-    from sv_rom_simulation.parameters import Parameters
+    io_1d = pytest.importorskip("svromutils.io_1d")
+    from svromutils.parameters import Parameters
 
     bcs.write_rcrt(tmp_path / "rcrt.dat", {"cap_right": RCR(100.0, 1e-4, 1500.0, 10.0)})
     bcs.write_resistance(tmp_path / "resistance.dat", {"cap_left": Resistance(200.0)})

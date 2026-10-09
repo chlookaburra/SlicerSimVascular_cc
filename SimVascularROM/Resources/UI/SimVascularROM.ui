@@ -368,30 +368,13 @@
        </widget>
       </item>
       <item row="1" column="0">
-       <widget class="QLabel" name="romPackageLabel">
-        <property name="text">
-         <string>svROMSimulation:</string>
-        </property>
-       </widget>
-      </item>
-      <item row="1" column="1">
-       <widget class="ctkPathLineEdit" name="romPackagePathLineEdit">
-        <property name="toolTip">
-         <string>A checkout of svROMSimulation, the folder holding sv_rom_simulation. Not needed where it is installed into Slicer's Python. VMTK comes from SlicerVMTK either way.</string>
-        </property>
-        <property name="filters">
-         <set>ctkPathLineEdit::Dirs</set>
-        </property>
-       </widget>
-      </item>
-      <item row="2" column="0">
        <widget class="QLabel" name="solverLabel">
         <property name="text">
          <string>svzerodsolver:</string>
         </property>
        </widget>
       </item>
-      <item row="2" column="1">
+      <item row="1" column="1">
        <widget class="ctkPathLineEdit" name="solverPathLineEdit">
         <property name="toolTip">
          <string>The svZeroDSolver executable. Left empty, svzerodsolver on the PATH is used.</string>
@@ -401,14 +384,14 @@
         </property>
        </widget>
       </item>
-      <item row="3" column="0">
+      <item row="2" column="0">
        <widget class="QLabel" name="visualizationScriptLabel">
         <property name="text">
          <string>svZeroDVisualization:</string>
         </property>
        </widget>
       </item>
-      <item row="3" column="1">
+      <item row="2" column="1">
        <widget class="ctkPathLineEdit" name="visualizationScriptPathLineEdit">
         <property name="toolTip">
          <string>An svZeroDSolver checkout, or its applications/svZeroDVisualization folder, or visualize_simulation.py itself.</string>
@@ -418,14 +401,14 @@
         </property>
        </widget>
       </item>
-      <item row="4" column="0">
+      <item row="3" column="0">
        <widget class="QLabel" name="visualizationPythonLabel">
         <property name="text">
          <string>Python environment:</string>
         </property>
        </widget>
       </item>
-      <item row="4" column="1">
+      <item row="3" column="1">
        <widget class="ctkPathLineEdit" name="visualizationPythonPathLineEdit">
         <property name="toolTip">
          <string>The python executable of an environment with pysvzerod, dash, plotly, pandas, networkx and pydot, which svZeroDVisualization runs on: a conda environment's bin/python, for instance. Not Slicer's: none of those are, and they need not be.</string>

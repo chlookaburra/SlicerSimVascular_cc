@@ -11,14 +11,14 @@ This panel is the setting up and the looking. The mesh is one whose faces SimVas
 has named -- the names are read off it, never typed again here -- and the conditions are set per
 cap in a table, an inflow's waveform loaded by double-clicking its values. The centerlines come
 from SlicerVMTK, traced from the inlet the operator picks; the model is built and written by
-`sv_rom_simulation`; svZeroDSolver is run as a process; and what it says comes back as a plot
+`svromutils`; svZeroDSolver is run as a process; and what it says comes back as a plot
 over the cycle of the caps selected in the table, the centerlines coloured by pressure, laid
 inside the anatomy they came from, and a CSV of every cap to take away.
 
 ## Where the work is
 
 In `svromsetup`, the package beside this file, which imports nothing from Slicer: the conditions
-and SimVascular's files for them, the case folder, the calls into `sv_rom_simulation` and the
+and SimVascular's files for them, the case folder, the calls into `svromutils` and the
 checks on what it wrote, the solver run, the results read back. This file is the MRML adapter --
 it reads the selected node, calls the package, and puts the answer in the scene -- so a case set
 up here and one set up from a terminal are the same case.
@@ -33,12 +33,15 @@ the inlet makes no difference to the answer, only to how the network is drawn.
 
 ## VMTK and the package under Slicer
 
-`sv_rom_simulation` imports VMTK as `from vmtk import vtkvmtk`, which is how pip's VMTK is laid
-out. pip's VMTK must not be installed into Slicer: it pins a VTK of its own, and a second VTK
-over Slicer's breaks the application. SlicerVMTK carries the same classes in modules of its
-own, so `vmtk.vtkvmtk` is assembled from those before the package is imported -- see
-`ensureVmtk` -- and the package itself is found where it is installed or where the Tools
-section says a checkout is.
+`svromutils`, the package that builds the model, is on PyPI and is installed into Slicer's Python
+the first time it is needed -- but without what it declares it depends on, every one of which is
+in Slicer already and none of which may be installed over it. pip's VMTK pins a VTK of its own,
+and a second VTK over Slicer's breaks the application; `vtk` is that second VTK; and its numpy and
+scipy floors are newer than the numpy and scipy Slicer and its extensions were built against.
+
+It imports VMTK as `from vmtk import vtkvmtk`, which is how pip's VMTK is laid out. SlicerVMTK
+carries the same classes in modules of its own, so `vmtk.vtkvmtk` is assembled from those before
+the package is imported -- see `ensureVmtk`.
 """
 
 import importlib
@@ -103,7 +106,6 @@ POINTS_PARAMETER = "PointsPerCycle"
 
 # Where each tool is on this machine: application settings, not scene parameters, because a
 # path is one computer's and a scene is copied between them.
-ROM_PACKAGE_SETTING = "SimVascularROM/svROMSimulationPath"
 SOLVER_SETTING = "SimVascularROM/SolverExecutable"
 VISUALIZATION_SCRIPT_SETTING = "SimVascularROM/VisualizationScript"
 VISUALIZATION_PYTHON_SETTING = "SimVascularROM/VisualizationPython"
@@ -122,8 +124,17 @@ PLOT_COLUMN_ATTRIBUTE = "SimVascularROM.Column"
 RESULTS_QUANTITY = "Pressure"
 RESULTS_ARRAY_NAME = results.PRESSURE_ARRAY_NAME
 
+# svromutils, the package that builds the 0D model, as pip is asked for it -- and what it declares
+# it depends on that is not installed with it. Every one of those is in Slicer already, and
+# installing any of them would break it: vmtk brings a VTK of its own and vtk is one, a second
+# VTK over Slicer's; and svromutils asks for numpy>=2.5 and scipy>=1.18, newer than the ones
+# Slicer and its extensions were built against, which pip would replace them with. What it uses
+# of them works with Slicer's own, VMTK through SlicerVMTK (see ensureVmtk).
+ROM_PACKAGE_REQUIREMENT = "svromutils"
+ROM_PACKAGE_SKIPPED_DEPENDENCIES = ["vmtk", "vtk", "numpy", "scipy"]
+
 # The modules SlicerVMTK's classes are in. pip's VMTK gathers the same classes into one module,
-# `vmtk.vtkvmtk`, and that is what `sv_rom_simulation` imports.
+# `vmtk.vtkvmtk`, and that is what `svromutils` imports.
 VMTK_MODULES = (
     "vtkvmtkCommonPython",
     "vtkvmtkComputationalGeometryPython",
@@ -192,12 +203,12 @@ class SimVascularROM(ScriptedLoadableModule):
         self.parent.helpText = _(
             "Set up a 0D (reduced-order) simulation of a vascular model whose faces are named "
             "in SimVascular Mesh Prep: one boundary condition per cap, centerlines from the "
-            "inlet, an svZeroDSolver input file written by sv_rom_simulation, the solver run, "
+            "inlet, an svZeroDSolver input file written by svromutils, the solver run, "
             "and the results shown per cap, over the cycle, and along the centerlines."
         )
         self.parent.acknowledgementText = _(
             "Developed in the Cardiovascular Biomechanics Computation Lab at Stanford "
-            "University. The model is built by sv_rom_simulation and solved by svZeroDSolver; "
+            "University. The model is built by svromutils and solved by svZeroDSolver; "
             "the centerlines are VMTK's, through SlicerVMTK. The setting up is the svromsetup "
             "package beside this module, which runs outside Slicer as well."
         )
@@ -240,14 +251,12 @@ class SimVascularROMWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         self.conditionsTable.emphasisNote = _("The source: the centerlines start here.")
 
         settings = qt.QSettings()
-        self.ui.romPackagePathLineEdit.currentPath = settings.value(ROM_PACKAGE_SETTING, "")
         self.ui.solverPathLineEdit.currentPath = settings.value(SOLVER_SETTING, "")
         self.ui.visualizationScriptPathLineEdit.currentPath = settings.value(
             VISUALIZATION_SCRIPT_SETTING, "")
         self.ui.visualizationPythonPathLineEdit.currentPath = settings.value(
             VISUALIZATION_PYTHON_SETTING, "")
-        for lineEdit, key in ((self.ui.romPackagePathLineEdit, ROM_PACKAGE_SETTING),
-                              (self.ui.solverPathLineEdit, SOLVER_SETTING),
+        for lineEdit, key in ((self.ui.solverPathLineEdit, SOLVER_SETTING),
                               (self.ui.visualizationScriptPathLineEdit, VISUALIZATION_SCRIPT_SETTING),
                               (self.ui.visualizationPythonPathLineEdit, VISUALIZATION_PYTHON_SETTING)):
             lineEdit.connect("currentPathChanged(QString)",
@@ -462,7 +471,7 @@ class SimVascularROMWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         if self._inletFaceId is None:
             raise RuntimeError(_("Choose the source the centerlines start from."))
         directory = self.caseDirectory()
-        self.logic.importRomPackage(self.ui.romPackagePathLineEdit.currentPath)
+        self.logic.importRomPackage()
         started = time.time()
         case.write_surfaces(node.GetMesh(), self.namedFaces.names, directory, self.namedFaces.arrayName)
         centerlines = case.compute_centerlines(directory, self._inletFaceId)
@@ -515,7 +524,7 @@ class SimVascularROMWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         node = self.ui.inputMeshSelector.currentNode()
         capNames = self.checkConditions()
         directory = self.caseDirectory()
-        self.logic.importRomPackage(self.ui.romPackagePathLineEdit.currentPath)
+        self.logic.importRomPackage()
         if self._centerlinesKey != self.centerlinesKey() or case.read_centerlines(directory) is None:
             self.computeCenterlines()
         byName = self.conditionsTable.conditionsByName()
@@ -704,21 +713,45 @@ class SimVascularROMLogic(ScriptedLoadableModuleLogic):
         ScriptedLoadableModuleLogic.__init__(self)
 
     @staticmethod
-    def importRomPackage(checkout=""):
-        """Make `sv_rom_simulation` importable: VMTK from SlicerVMTK, the package from a checkout."""
+    def importRomPackage():
+        """Make `svromutils` importable: VMTK from SlicerVMTK, the package from PyPI.
+
+        Installed the first time it is needed, through Slicer's own installer, which asks before it
+        downloads anything. Asked to skip what svromutils declares it depends on (see
+        ROM_PACKAGE_SKIPPED_DEPENDENCIES): it is installed without them, and they are recorded as
+        skipped, so that nothing pip does later goes back and installs them over Slicer's own.
+        """
         ensureVmtk()
         try:
-            import sv_rom_simulation  # noqa: F401
+            import svromutils  # noqa: F401
             return
         except ImportError:
             pass
-        if checkout and os.path.isdir(os.path.join(checkout, "sv_rom_simulation")):
-            if checkout not in sys.path:
-                sys.path.insert(0, checkout)
-            import sv_rom_simulation  # noqa: F401
-            return
-        raise RuntimeError(_("sv_rom_simulation is not available. Under Tools, set where a "
-                             "checkout of svROMSimulation is."))
+        try:
+            from slicer import packaging
+            ensure = packaging.pip_ensure
+        except (ImportError, AttributeError):
+            ensure = None
+        if ensure is not None:
+            try:
+                ensure(ROM_PACKAGE_REQUIREMENT, skip_packages=ROM_PACKAGE_SKIPPED_DEPENDENCIES,
+                       requester=_("SimVascular ROM Simulation"))
+            except RuntimeError:
+                pass  # Declined; said below, with how to install it later, rather than as "declined".
+        elif slicer.util.confirmOkCancelDisplay(
+                _("SimVascular ROM Simulation builds its model with the svromutils package, which "
+                  "is not installed. Install it from PyPI now?")):
+            # A Slicer older than slicer.packaging: the package alone, with none of what it asks
+            # for, for the reason above.
+            slicer.util.pip_install(f"--no-deps {ROM_PACKAGE_REQUIREMENT}")
+        importlib.invalidate_caches()
+        try:
+            import svromutils  # noqa: F401
+        except ImportError:
+            raise RuntimeError(_(
+                "svromutils is not installed. It is installed from PyPI the first time it is "
+                "needed, when asked; to install it by hand, run "
+                "slicer.util.pip_install('--no-deps svromutils') in the Python console.")) from None
 
     @staticmethod
     def externalEnvironment():
@@ -1030,13 +1063,12 @@ class SimVascularROMTest(ScriptedLoadableModuleTest):
 
         widget = self.widget()
         # Where the Tools section does not say -- a --testing run has settings of its own -- the
-        # variables the package's headless tests read.
-        if not widget.ui.romPackagePathLineEdit.currentPath:
-            widget.ui.romPackagePathLineEdit.currentPath = os.environ.get("SV_ROM_SIMULATION_PATH", "")
+        # variable the package's headless tests read.
         if not widget.ui.solverPathLineEdit.currentPath:
             widget.ui.solverPathLineEdit.currentPath = os.environ.get("SVZERODSOLVER", "")
         try:
-            widget.logic.importRomPackage(widget.ui.romPackagePathLineEdit.currentPath)
+            # A --testing run installs nothing, so this runs where svromutils is installed already.
+            widget.logic.importRomPackage()
         except RuntimeError as error:
             self.delayDisplay(f"Skipped: {error}")
             return

@@ -1,4 +1,4 @@
-"""A whole case on a Y, through `sv_rom_simulation` and svZeroDSolver where they are available."""
+"""A whole case on a Y, through `svromutils` and svZeroDSolver where they are available."""
 
 import json
 import os
@@ -8,7 +8,7 @@ import pytest
 from vtk.util.numpy_support import vtk_to_numpy
 
 pytest.importorskip("vmtk")
-pytest.importorskip("sv_rom_simulation")
+pytest.importorskip("svromutils")
 
 from svromsetup import case, results, solver, testing
 from svromsetup.boundary_conditions import Inflow, RCR, Resistance

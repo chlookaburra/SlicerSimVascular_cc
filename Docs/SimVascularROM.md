@@ -7,9 +7,8 @@ in [SimVascular Mesh Prep](SimVascularMeshPrep.md), runs it with
 [svZeroDSolver](https://github.com/SimVascular/svZeroDSolver), and shows the results in the
 scene. You give one boundary condition per cap and pick the source; the module traces
 centerlines from the source with [SlicerVMTK](https://github.com/vmtk/SlicerExtension-VMTK),
-builds the 0D model along them with `sv_rom_simulation`
-([svROMSimulation](https://github.com/ktbolt/svROMSimulation)), writes the svZeroDSolver input
-file, runs the solver, and reads the CSV back.
+builds the 0D model along them with [svromutils](https://pypi.org/project/svromutils/),
+writes the svZeroDSolver input file, runs the solver, and reads the CSV back.
 
 A 0D model replaces the three-dimensional flow with a network: each vessel segment becomes a
 resistance, an inductance and a capacitance worked out from its length and cross-section. It
@@ -117,11 +116,18 @@ round, and the status line says so.
 
 ## Setting up
 
-Install **SlicerVMTK** from the Extensions Manager. Then, under **Tools** in the panel:
+Install **SlicerVMTK** from the Extensions Manager.
 
-- **svROMSimulation**: a checkout of [svROMSimulation](https://github.com/ktbolt/svROMSimulation),
-  the folder holding `sv_rom_simulation`. Not needed if it is installed into Slicer's Python.
-  **Do not** pip-install its `vmtk` dependency into Slicer (see below).
+[svromutils](https://pypi.org/project/svromutils/), which builds the 0D model, needs no setting
+up: the first time you compute centerlines or create solver files, Slicer asks to install it from
+PyPI, and does. It is installed *without* the packages it says it depends on, all of which Slicer
+has already (see [svromutils under Slicer](#svromutils-under-slicer)). **Do not**
+`pip_install("svromutils")` into Slicer by hand: that installs them all over Slicer's own. If you
+need to install it yourself, `slicer.util.pip_install("--no-deps svromutils")` in the Python
+console is the same thing.
+
+Then, under **Tools** in the panel:
+
 - **svzerodsolver**: the svZeroDSolver executable. If left empty, `svzerodsolver` on the PATH
   is used.
 - **svZeroDVisualization** and **Python environment**: an svZeroDSolver checkout (or its
@@ -138,7 +144,7 @@ computer, and a scene moves between them.
 
 `SimVascularROM.py` is an MRML adapter over `svromsetup`, the package beside it, which imports
 nothing from Slicer: the conditions and SimVascular's files for them, the case folder, the calls
-into `sv_rom_simulation` and the checks on what it wrote, the solver run, and the results read
+into `svromutils` and the checks on what it wrote, the solver run, and the results read
 back. A case set up from a terminal calls the same functions:
 
 ```python
@@ -153,14 +159,34 @@ solver.run_solver(config, "case/results.csv", "svzerodsolver")
 faces = results.face_results(config, solver.read_results("case/results.csv"), "cap_RSVC")
 ```
 
-`sv_rom_simulation` is imported only inside the two functions that call it, because it imports
+`svromutils` is imported only inside the two functions that call it, because it imports
 VMTK. Everything else in `svromsetup` needs only numpy and VTK, and so do its tests.
+
+### svromutils under Slicer
+
+`svromutils` is installed with `slicer.packaging.pip_ensure`, asked to skip `vmtk`, `vtk`, `numpy`
+and `scipy` (`ROM_PACKAGE_SKIPPED_DEPENDENCIES`). Each would break Slicer if pip installed it:
+
+- **vmtk** pins a VTK of its own (`vtk==9.6.2` for 1.5.2), and a second VTK over Slicer's breaks
+  the application.
+- **vtk** *is* that second VTK.
+- **numpy and scipy**: svromutils 0.1.2 asks for `numpy>=2.5` and `scipy>=1.18`, newer than the
+  numpy 2.4 and scipy 1.17 in Slicer 5.12. pip would replace them, under every extension built
+  against the old ones. What svromutils uses of them works with Slicer's own.
+
+Skipping them installs svromutils with `--no-deps`, and removes them from its installed metadata,
+so that a later `pip install` of something else does not go back and install them. The rejected
+alternative was a plain `pip_ensure("svromutils")` with a constraints file pinning Slicer's own
+versions. That fails outright: pip cannot satisfy `numpy>=2.5` and `numpy==2.4.*` together, and
+vmtk's VTK pin conflicts with any constraint.
+
+If the package ever declares these as optional (an extra, say `svromutils[vmtk]`), the skip list
+can go.
 
 ### VMTK under Slicer
 
-`sv_rom_simulation` imports `from vmtk import vtkvmtk`, which is how pip's VMTK is laid out.
-pip's VMTK is **not** installed into Slicer, because it pins a VTK of its own (`vtk==9.6.2` for
-1.5.2), and a second VTK over Slicer's breaks the application. SlicerVMTK carries the same
+`svromutils` imports `from vmtk import vtkvmtk`, which is how pip's VMTK is laid out, and pip's
+VMTK is not installed (above). SlicerVMTK carries the same
 classes in modules of its own (`vtkvmtkComputationalGeometryPython`, …). So the panel assembles
 a `vmtk.vtkvmtk` module out of them before importing the package (`ensureVmtk`). The branch
 splitting the package relies on, `vtkvmtkPolyDataCenterlineBranchSplitting`, has been in
@@ -191,11 +217,12 @@ cycles.
 The package's tests are headless (pytest, from `SimVascularROM/`):
 
 ```sh
-SV_ROM_SIMULATION_PATH=~/Documents/svROMSimulation python -m pytest
+python -m pip install svromutils     # outside Slicer, where pip's VMTK and VTK are what you want
+SVZERODSOLVER=/path/to/svzerodsolver python -m pytest
 ```
 
 `svromsetup.testing` builds a capped Y, with arms of different radii so that its two outlets can
-be told apart by their results. The tests that need `sv_rom_simulation` (and VMTK) or the solver
+be told apart by their results. The tests that need `svromutils` (and VMTK) or the solver
 skip themselves where these are missing; with only numpy, VTK and pytest, 26 run. The module's
 own tests (`SimVascularROMTest`) run under Slicer: they check that conditions are kept per mesh,
 that an unnamed mesh is sent to Mesh Prep, and a whole case on the Y. A `--testing` run loads

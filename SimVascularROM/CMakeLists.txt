@@ -4,8 +4,8 @@ set(MODULE_NAME SimVascularROM)
 #-----------------------------------------------------------------------------
 # `svromsetup` does the work; this module is an MRML adapter over it. Listing the package's files
 # here installs them beside the module, which is already on Slicer's Python path, as Mesh Prep
-# does with `svmeshcomplete`. `sv_rom_simulation` is not listed: it is a package of its own,
-# found where it is installed or where the panel's Tools section says a checkout is.
+# does with `svmeshcomplete`. `svromutils` is not listed: it is a package of its own, on PyPI,
+# which the panel installs into Slicer's Python the first time it is needed.
 set(MODULE_PYTHON_SCRIPTS
   ${MODULE_NAME}.py
   # The faces and the conditions table SimVascular MultiPhysics shares with this panel.
