@@ -154,7 +154,7 @@ VMTK_MODULES = (
 RESULTS_COLOR_NODES = ("vtkMRMLColorTableNodeFileColdToHotRainbow.txt",
                        "vtkMRMLColorTableNodeRainbow")
 
-# What the mesh is faded to when results are shown inside it.
+# What the mesh is faded to when centerlines or results are shown inside it.
 RESULTS_MESH_OPACITY = 0.25
 
 # One colour per plotted cap, repeating after ten.
@@ -780,6 +780,11 @@ class SimVascularROMLogic(ScriptedLoadableModuleLogic):
         display.SetLineWidth(3)
         display.SetScalarVisibility(False)
         display.SetVisibility(True)
+        # Faded as for results: the centerlines run inside the vessel, so behind an opaque mesh
+        # nothing on screen changes when they have been computed.
+        meshDisplay = meshNode.GetDisplayNode()
+        if meshDisplay is not None and meshDisplay.GetOpacity() > RESULTS_MESH_OPACITY:
+            meshDisplay.SetOpacity(RESULTS_MESH_OPACITY)
         results = meshNode.GetNodeReference(RESULTS_MODEL_REFERENCE)
         if results is not None and results.GetDisplayNode() is not None:
             results.GetDisplayNode().SetVisibility(False)
