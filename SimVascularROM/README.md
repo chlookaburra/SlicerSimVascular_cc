@@ -19,7 +19,8 @@ case/
   inflow.flow, flow.dat       the inflows
   rcrt.dat, resistance.dat    the outlets
   solver_0d.json              svZeroDSolver's input
-  results.csv                 its output
+  branch_results.csv          its output, per vessel segment
+  cap_results.csv             the same per cap, from Export results
 ```
 
 ## Outside Slicer

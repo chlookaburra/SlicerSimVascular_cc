@@ -17,7 +17,8 @@ case/
   flow.dat, <name>.flow         the other inflows, prescribed at their centerline ends
   rcrt.dat, resistance.dat      the outlets
   solver_0d.json                svZeroDSolver's input
-  results.csv                   svZeroDSolver's output
+  branch_results.csv            svZeroDSolver's output, per vessel segment
+  cap_results.csv               the same results per cap, where the panel exports them by default
 ```
 
 The face files are the same `mesh-complete` folder a 3D case of the same mesh uses, so a 0D
@@ -57,7 +58,13 @@ MESH_COMPLETE_DIR_NAME = "mesh-complete"
 CENTERLINES_NAME = "centerlines.vtp"
 INFLOW_NAME = "inflow.flow"
 SOLVER_INPUT_NAME = "solver_0d.json"
-RESULTS_NAME = "results.csv"
+# The two results files a case folder can hold, named for what a row is about. svZeroDSolver
+# writes its results per vessel segment, `branch3_seg0`, which says nothing about which cap is
+# which; the export is the same results per cap, by the names the faces go by. Called
+# `results.csv` and `<model>_cap_results.csv`, side by side, they read as two versions of one
+# file.
+RESULTS_NAME = "branch_results.csv"
+CAP_RESULTS_NAME = "cap_results.csv"
 
 # SimVascular's names for its boundary condition files; `svromutils` picks the kind of
 # condition by which of them it is given.

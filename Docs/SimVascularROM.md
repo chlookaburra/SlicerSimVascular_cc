@@ -87,12 +87,15 @@ holds results shows them again when the mesh is selected.
   flow.dat, cap_*.flow          the other inflows
   rcrt.dat, resistance.dat      the outlets
   solver_0d.json                svZeroDSolver's input
-  results.csv                   svZeroDSolver's output
+  branch_results.csv            svZeroDSolver's output, per vessel segment
+  cap_results.csv               Export results' suggestion: the same results, per cap
 ```
 
 The boundary conditions in `solver_0d.json` are named after their faces (`RCR_cap_lpa_a`,
 `FLOW_cap_azygous_vein`), except the source's, which is `INFLOW`. The solver's results are per
-vessel, named `branch<b>_seg<s>`; the panel works out which vessel end each cap is.
+vessel segment, named `branch<b>_seg<s>`, which is why their file is `branch_results.csv`; the
+panel works out which vessel end each cap is, and **Export results** writes the same results by
+cap name, suggested as `cap_results.csv` beside it.
 
 ### Several inflows
 
@@ -150,8 +153,9 @@ case.write_surfaces(volume_mesh, names, "case")             # {face id: name}, a
 case.compute_centerlines("case", inlet_face_id=3)
 config = case.write_solver_input("case", {"cap_RSVC": Inflow.steady(20.0), ...}, 3, "cap_RSVC",
                                  case.SimulationParameters(), "fontan")
-solver.run_solver(config, "case/results.csv", solver.find_solver())  # pip install svzerod
-faces = results.face_results(config, solver.read_results("case/results.csv"), "cap_RSVC")
+solver.run_solver(config, "case/branch_results.csv", solver.find_solver())  # pip install svzerod
+faces = results.face_results(config, solver.read_results("case/branch_results.csv"), "cap_RSVC")
+results.write_face_results_csv("case/cap_results.csv", faces)
 ```
 
 `svromutils` is imported only inside the two functions that call it, because it imports

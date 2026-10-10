@@ -656,12 +656,12 @@ class SimVascularROMWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
     def chooseExportFile(self):
         """Where the results are to be written, or "" if nowhere was chosen.
 
-        Its own method, as chooseWaveformFile is, so that a test can answer it.
+        Its own method, as chooseWaveformFile is, so that a test can answer it. Suggested in the
+        output folder, beside the solver's own per-segment results, under a name that says it is
+        the per-cap one; not after the model, which the output folder is already named for.
         """
-        node = self.ui.inputMeshSelector.currentNode()
-        name = sanitized(node.GetName()) if node is not None else ""
         suggested = os.path.join(self.ui.caseDirectoryPathLineEdit.currentPath or "",
-                                 f"{name or 'model'}_cap_results.csv")
+                                 case.CAP_RESULTS_NAME)
         return qt.QFileDialog.getSaveFileName(
             slicer.util.mainWindow(), _("Export results"), suggested,
             _("CSV files (*.csv);;All files (*)"))
@@ -1077,7 +1077,9 @@ class SimVascularROMTest(ScriptedLoadableModuleTest):
         chart = node.GetNodeReference(RESULTS_CHART_REFERENCE)
         self.assertEqual(chart.GetNthPlotSeriesNode(0).GetYColumnName(), "cap_right pressure [mmHg]")
         self.assertTrue(widget.ui.exportButton.enabled)
-        exported = os.path.join(widget.ui.caseDirectoryPathLineEdit.currentPath, "caps.csv")
+        directory = widget.ui.caseDirectoryPathLineEdit.currentPath
+        self.assertTrue(os.path.isfile(os.path.join(directory, case.RESULTS_NAME)))
+        exported = os.path.join(directory, case.CAP_RESULTS_NAME)
         widget.exportResults(exported)
         with open(exported) as handle:
             header = handle.readline().strip().split(",")
