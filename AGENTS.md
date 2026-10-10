@@ -59,12 +59,17 @@ cd SimVascularMeshPrep && python -m pytest
 ```
 
 **svromsetup** — pytest; 26 tests with numpy and VTK alone, the rest skip unless
-`svromutils` (with VMTK) and `svzerodsolver` are found. `pip install svromutils` into the test
-environment — outside Slicer its VMTK and VTK are fine — and point at a solver to run them all:
+`svromutils` (with VMTK) and svZeroDSolver are installed. Both are on PyPI. Install them into
+the test environment (outside Slicer, their VMTK and VTK are fine) to run them all:
 
 ```sh
-cd SimVascularROM && SVZERODSOLVER=/path/to/svzerodsolver python -m pytest
+cd SimVascularROM && python -m pip install svromutils svzerod && python -m pytest
 ```
+
+The solver is `svzerod`'s `svzerodsolver`, found beside the interpreter whether or not its
+environment is activated. `SVZERODSOLVER=/path/to/svzerodsolver` points at a build of your own
+instead. Under Slicer the panel installs `svzerod` itself and runs it as a process, never
+importing it: `svromsetup/solver.py` says why.
 
 **svmpsetup** — pytest; one test runs svMultiPhysics for two time steps on a cube, and skips
 itself unless the solver is at `SVMULTIPHYSICS` or on the PATH:

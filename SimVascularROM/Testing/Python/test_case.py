@@ -15,7 +15,7 @@ from svromsetup.boundary_conditions import Inflow, RCR, Resistance
 
 SOLVER = solver.find_solver(os.environ.get("SVZERODSOLVER"))
 needs_solver = pytest.mark.skipif(SOLVER is None,
-                                  reason="svzerodsolver is not on the PATH or at SVZERODSOLVER")
+                                  reason="svzerod is not installed, and SVZERODSOLVER names no solver")
 
 
 @pytest.fixture(scope="module")

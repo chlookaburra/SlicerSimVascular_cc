@@ -10,16 +10,15 @@ read back per face and mapped onto the centerlines, which is where anyone looks 
   scene, and as SimVascular's own files (`.flow`, `rcrt.dat`, `resistance.dat`).
 - `case`: the case folder, and the calls into `svromutils`, held to what they were asked
   for afterwards.
-- `solver`: svZeroDSolver run as an executable, and its CSV read.
+- `solver`: svZeroDSolver (`svzerod` on PyPI) run as a process, and its CSV read.
 - `results`: per-face flows and pressures, and the centerlines coloured by them.
-- `visualization`: svZeroDVisualization, started as a process of its own.
 
 Nothing here imports `slicer`. `svmeshcomplete` writes the faces, and `svromutils` --
 which imports VMTK -- is imported only where it is called, so everything but the centerlines
 and the solver input runs with numpy and VTK alone, and so do the tests of it.
 """
 
-from svromsetup import boundary_conditions, case, results, solver, visualization
+from svromsetup import boundary_conditions, case, results, solver
 from svromsetup.boundary_conditions import (
     INFLOW,
     KINDS,
@@ -40,7 +39,6 @@ __all__ = [
     "case",
     "results",
     "solver",
-    "visualization",
     "INFLOW",
     "KINDS",
     "MMHG",

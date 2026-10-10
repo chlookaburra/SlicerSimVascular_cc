@@ -11,7 +11,7 @@ This panel is the setting up and the looking. The mesh is one whose faces SimVas
 has named -- the names are read off it, never typed again here -- and the conditions are set per
 cap in a table, an inflow's waveform loaded by double-clicking its values. The centerlines come
 from SlicerVMTK, traced from the inlet the operator picks; the model is built and written by
-`svromutils`; svZeroDSolver is run as a process; and what it says comes back as a plot
+`svromutils`; svZeroDSolver (`svzerod`) is run as a process; and what it says comes back as a plot
 over the cycle of the caps selected in the table, the centerlines coloured by pressure, laid
 inside the anatomy they came from, and a CSV of every cap to take away.
 
@@ -31,10 +31,19 @@ prescribed there as flows entering the model, which the 0D network does not mind
 resistance and a junction's mass balance do not care which way the flow goes. Which inflow is
 the inlet makes no difference to the answer, only to how the network is drawn.
 
-## VMTK and the package under Slicer
+## VMTK and the packages under Slicer
 
-`svromutils`, the package that builds the model, is on PyPI and is installed into Slicer's Python
-the first time it is needed -- but without what it declares it depends on, every one of which is
+Nothing this panel runs is installed by hand or kept anywhere of its own: both packages are on
+PyPI, and each is installed into Slicer's Python the first time it is needed, through Slicer's
+own installer, which asks first.
+
+`svzerod`, svZeroDSolver, is installed whole. It is a compiled extension, but published as wheels
+for every platform and every Python Slicer has shipped, so nothing is built; and what it asks for
+-- numpy, unpinned, and pandas -- replaces nothing of Slicer's. Its `svzerodsolver` command is run
+as a process, from where pip put it beside Slicer's Python and with Slicer's own environment,
+which that Python needs; `svromsetup.solver` says why it is not imported.
+
+`svromutils`, the package that builds the model, is installed -- but without what it declares it depends on, every one of which is
 in Slicer already and none of which may be installed over it. pip's VMTK pins a VTK of its own,
 and a second VTK over Slicer's breaks the application; `vtk` is that second VTK; and its numpy and
 scipy floors are newer than the numpy and scipy Slicer and its extensions were built against.
@@ -69,7 +78,7 @@ from slicer.util import VTKObservationMixin
 
 from svmeshcomplete.face_table import sanitized
 from svromsetup import boundary_conditions as bcs
-from svromsetup import case, results, solver, visualization
+from svromsetup import case, results, solver
 
 # The faces and the table of their conditions, shared with SimVascular MultiPhysics -- the names
 # are Mesh Prep's and the conditions one set per mesh, whichever solver they are written for.
@@ -104,11 +113,6 @@ VISCOSITY_PARAMETER = "Viscosity"
 CYCLES_PARAMETER = "CardiacCycles"
 POINTS_PARAMETER = "PointsPerCycle"
 
-# Where each tool is on this machine: application settings, not scene parameters, because a
-# path is one computer's and a scene is copied between them.
-SOLVER_SETTING = "SimVascularROM/SolverExecutable"
-VISUALIZATION_SCRIPT_SETTING = "SimVascularROM/VisualizationScript"
-VISUALIZATION_PYTHON_SETTING = "SimVascularROM/VisualizationPython"
 
 # The units the mesh is in, which are Slicer's: its coordinates are millimetres whatever unit it
 # displays them in. Both solvers work in centimetres, and the package scales lengths by 0.1 and
@@ -192,6 +196,34 @@ def ensureVmtk():
     sys.modules["vmtk.vtkvmtk"] = namespace
 
 
+def pipEnsure(requirement, purpose, skipPackages=None):
+    """Install `requirement` from PyPI into Slicer's Python if it is not there, asking first.
+
+    Through `slicer.packaging.pip_ensure`, which asks before it downloads anything and installs
+    nothing in a --testing run, so that a test never changes the Python it runs on. Declining is
+    not raised here: the caller finds the package still missing and says how to install it later,
+    which is more use than "declined". `purpose` finishes the question a Slicer older than
+    `slicer.packaging` asks instead.
+    """
+    try:
+        from slicer import packaging
+        ensure = packaging.pip_ensure
+    except (ImportError, AttributeError):
+        ensure = None
+    if ensure is not None:
+        try:
+            ensure(requirement, skip_packages=skipPackages, requester=_("SimVascular ROM Simulation"))
+        except RuntimeError:
+            pass
+    elif slicer.util.confirmOkCancelDisplay(
+            _("SimVascular ROM Simulation {purpose} with {requirement}, which is not installed. "
+              "Install it from PyPI now?").format(purpose=purpose, requirement=requirement)):
+        # Without slicer.packaging there is no skipping some of what a package asks for, only
+        # all of it.
+        slicer.util.pip_install(("--no-deps " if skipPackages else "") + requirement)
+    importlib.invalidate_caches()
+
+
 class SimVascularROM(ScriptedLoadableModule):
     def __init__(self, parent):
         ScriptedLoadableModule.__init__(self, parent)
@@ -235,7 +267,6 @@ class SimVascularROMWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         self._solverFilesKey = None
         self._faceResults = []
         self._resultsNote = ""
-        self._visualization = None
 
     def setup(self):
         ScriptedLoadableModuleWidget.setup(self)
@@ -250,18 +281,6 @@ class SimVascularROMWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
             startDirectory=lambda: self.ui.caseDirectoryPathLineEdit.currentPath)
         self.conditionsTable.emphasisNote = _("The source: the centerlines start here.")
 
-        settings = qt.QSettings()
-        self.ui.solverPathLineEdit.currentPath = settings.value(SOLVER_SETTING, "")
-        self.ui.visualizationScriptPathLineEdit.currentPath = settings.value(
-            VISUALIZATION_SCRIPT_SETTING, "")
-        self.ui.visualizationPythonPathLineEdit.currentPath = settings.value(
-            VISUALIZATION_PYTHON_SETTING, "")
-        for lineEdit, key in ((self.ui.solverPathLineEdit, SOLVER_SETTING),
-                              (self.ui.visualizationScriptPathLineEdit, VISUALIZATION_SCRIPT_SETTING),
-                              (self.ui.visualizationPythonPathLineEdit, VISUALIZATION_PYTHON_SETTING)):
-            lineEdit.connect("currentPathChanged(QString)",
-                             lambda path, key=key: qt.QSettings().setValue(key, path))
-
         self.ui.inputMeshSelector.connect("currentNodeChanged(vtkMRMLNode*)", self.onMeshChanged)
         self.ui.openMeshPrepButton.connect("clicked(bool)", self.onOpenMeshPrep)
         self.ui.inletComboBox.connect("currentIndexChanged(int)", self.onInletChanged)
@@ -269,7 +288,6 @@ class SimVascularROMWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         self.ui.createSolverFilesButton.connect("clicked(bool)", self.onCreateSolverFiles)
         self.ui.runButton.connect("clicked(bool)", self.onRun)
         self.ui.exportButton.connect("clicked(bool)", self.onExport)
-        self.ui.visualizationButton.connect("clicked(bool)", self.onOpenVisualization)
         self.ui.caseDirectoryPathLineEdit.connect("currentPathChanged(QString)",
                                                   self.onSimulationParameterChanged)
         for spinBox in (self.ui.densitySpinBox, self.ui.viscositySpinBox):
@@ -292,7 +310,6 @@ class SimVascularROMWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
 
     def cleanup(self):
         clearHighlight()
-        visualization.stop(self._visualization)
         self.removeObservers()
 
     def onSceneEndImport(self, caller=None, event=None):
@@ -553,16 +570,15 @@ class SimVascularROMWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         """
         self.checkConditions()
         directory = self.caseDirectory()
-        executable = solver.find_solver(self.ui.solverPathLineEdit.currentPath or None)
-        if executable is None:
-            raise RuntimeError(_("No svzerodsolver: set it under Tools, or put it on the PATH."))
+        executable = self.logic.ensureSolver()
         config = os.path.join(directory, case.SOLVER_INPUT_NAME)
         if self._solverFilesKey != self.solverFilesKey() or not os.path.isfile(config):
             self.createSolverFiles()
 
         started = time.time()
-        solver.run_solver(config, os.path.join(directory, case.RESULTS_NAME), executable,
-                          env=self.logic.externalEnvironment())
+        # With Slicer's own environment, not the one it started in: the solver is a command of
+        # Slicer's Python, and that is the environment Slicer's Python needs.
+        solver.run_solver(config, os.path.join(directory, case.RESULTS_NAME), executable)
         self.showResults(directory)
         flowIn = sum(face.mean_flow for face in self._faceResults if face.is_inflow)
         flowOut = sum(face.mean_flow for face in self._faceResults if not face.is_inflow)
@@ -609,7 +625,6 @@ class SimVascularROMWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
     # -- results -------------------------------------------------------------------------
     def populateResults(self):
         self.ui.exportButton.enabled = bool(self._faceResults)
-        self.ui.visualizationButton.enabled = bool(self._faceResults)
         if self._resultsNote:
             self.setStatus(self._resultsNote)
 
@@ -656,27 +671,6 @@ class SimVascularROMWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         return _("Wrote {count} caps' flow and pressure over the last cycle to {path}.").format(
             count=len(self._faceResults), path=written)
 
-    def onOpenVisualization(self):
-        with slicer.util.tryWithErrorDisplay(_("svZeroDVisualization could not be started.")):
-            self.openVisualization()
-
-    def openVisualization(self):
-        directory = self.caseDirectory()
-        script = visualization.find_script(self.ui.visualizationScriptPathLineEdit.currentPath)
-        if script is None:
-            raise RuntimeError(_("Set where svZeroDVisualization is under Tools: an svZeroDSolver "
-                                 "checkout, or its visualize_simulation.py."))
-        visualization.stop(self._visualization)
-        output = os.path.join(directory, "svZeroDVisualization")
-        self._visualization = visualization.launch(
-            self.ui.visualizationPythonPathLineEdit.currentPath, script,
-            os.path.join(directory, case.SOLVER_INPUT_NAME), output,
-            env=self.logic.externalEnvironment())
-        # Dash takes a few seconds to come up, and a browser opened before it has is an error page.
-        qt.QTimer.singleShot(6000, lambda: qt.QDesktopServices.openUrl(qt.QUrl(visualization.URL)))
-        self.setStatus(_("Starting svZeroDVisualization at {url}; if the page does not come up, "
-                         "its log is in {output}.").format(url=visualization.URL, output=output))
-
     # -- panel state -----------------------------------------------------------------------
     def updateButtons(self):
         if self.conditionsTable is None:
@@ -716,10 +710,10 @@ class SimVascularROMLogic(ScriptedLoadableModuleLogic):
     def importRomPackage():
         """Make `svromutils` importable: VMTK from SlicerVMTK, the package from PyPI.
 
-        Installed the first time it is needed, through Slicer's own installer, which asks before it
-        downloads anything. Asked to skip what svromutils declares it depends on (see
-        ROM_PACKAGE_SKIPPED_DEPENDENCIES): it is installed without them, and they are recorded as
-        skipped, so that nothing pip does later goes back and installs them over Slicer's own.
+        Installed the first time it is needed, asked to skip what svromutils declares it depends
+        on (see ROM_PACKAGE_SKIPPED_DEPENDENCIES): it is installed without them, and they are
+        recorded as skipped, so that nothing pip does later goes back and installs them over
+        Slicer's own.
         """
         ensureVmtk()
         try:
@@ -727,24 +721,7 @@ class SimVascularROMLogic(ScriptedLoadableModuleLogic):
             return
         except ImportError:
             pass
-        try:
-            from slicer import packaging
-            ensure = packaging.pip_ensure
-        except (ImportError, AttributeError):
-            ensure = None
-        if ensure is not None:
-            try:
-                ensure(ROM_PACKAGE_REQUIREMENT, skip_packages=ROM_PACKAGE_SKIPPED_DEPENDENCIES,
-                       requester=_("SimVascular ROM Simulation"))
-            except RuntimeError:
-                pass  # Declined; said below, with how to install it later, rather than as "declined".
-        elif slicer.util.confirmOkCancelDisplay(
-                _("SimVascular ROM Simulation builds its model with the svromutils package, which "
-                  "is not installed. Install it from PyPI now?")):
-            # A Slicer older than slicer.packaging: the package alone, with none of what it asks
-            # for, for the reason above.
-            slicer.util.pip_install(f"--no-deps {ROM_PACKAGE_REQUIREMENT}")
-        importlib.invalidate_caches()
+        pipEnsure(ROM_PACKAGE_REQUIREMENT, _("builds its model"), ROM_PACKAGE_SKIPPED_DEPENDENCIES)
         try:
             import svromutils  # noqa: F401
         except ImportError:
@@ -754,15 +731,23 @@ class SimVascularROMLogic(ScriptedLoadableModuleLogic):
                 "slicer.util.pip_install('--no-deps svromutils') in the Python console.")) from None
 
     @staticmethod
-    def externalEnvironment():
-        """The environment Slicer was started in, for running anything that is not Slicer.
+    def ensureSolver():
+        """svzerod's `svzerodsolver` beside Slicer's own Python, installed from PyPI if it is not.
 
-        Slicer's launcher points PYTHONHOME, PYTHONPATH and the library path at its own Python and
-        libraries. A process started with those inherited runs on Slicer's: another Python finds
-        Slicer's packages and none of its own, which is how svZeroDVisualization failed to import
-        pysvzerod from a Python that has it.
+        Only ever that one, never one found on the PATH -- a build of svZeroDSolver's own, or a
+        conda environment's -- because it is run with Slicer's environment, which is what Slicer's
+        Python needs, and a command of any other Python run with it starts on Slicer's instead.
         """
-        return slicer.util.startupEnvironment()
+        executable = solver.installed_solver()
+        if executable is None:
+            pipEnsure(solver.SOLVER_PACKAGE, _("solves its model"))
+            executable = solver.installed_solver()
+        if executable is None:
+            raise RuntimeError(_(
+                "svzerod (svZeroDSolver) is not installed. It is installed from PyPI the first "
+                "time a simulation is run, when asked; to install it by hand, run "
+                "slicer.util.pip_install('svzerod') in the Python console."))
+        return executable
 
     @staticmethod
     def suggestedCaseDirectory(meshNode):
@@ -1062,18 +1047,13 @@ class SimVascularROMTest(ScriptedLoadableModuleTest):
         from svromsetup import testing
 
         widget = self.widget()
-        # Where the Tools section does not say -- a --testing run has settings of its own -- the
-        # variable the package's headless tests read.
-        if not widget.ui.solverPathLineEdit.currentPath:
-            widget.ui.solverPathLineEdit.currentPath = os.environ.get("SVZERODSOLVER", "")
         try:
-            # A --testing run installs nothing, so this runs where svromutils is installed already.
+            # A --testing run installs nothing, so this runs where svromutils and svzerod are
+            # installed into Slicer already.
             widget.logic.importRomPackage()
+            widget.logic.ensureSolver()
         except RuntimeError as error:
             self.delayDisplay(f"Skipped: {error}")
-            return
-        if solver.find_solver(widget.ui.solverPathLineEdit.currentPath or None) is None:
-            self.delayDisplay("Skipped: no svzerodsolver")
             return
         node = self.namedY()
         widget.ui.inputMeshSelector.setCurrentNode(node)

@@ -140,7 +140,7 @@ def test_the_centerlines_carry_the_pressure_along_each_branch(solved):
 SOLVER = solver.find_solver(os.environ.get("SVZERODSOLVER"))
 
 
-@pytest.mark.skipif(SOLVER is None, reason="svzerodsolver is not on the PATH or at SVZERODSOLVER")
+@pytest.mark.skipif(SOLVER is None, reason="svzerod is not installed, and SVZERODSOLVER names no solver")
 def test_a_flow_prescribed_on_an_outlet_end_enters_the_model(tmp_path):
     """The sign the package writes a second inflow with, held to what the solver does with it."""
     config = tmp_path / "solver_0d.json"
@@ -153,7 +153,7 @@ def test_a_flow_prescribed_on_an_outlet_end_enters_the_model(tmp_path):
     assert faces["cap_right"].mean_pressure_mmhg == pytest.approx(15.0 * 100.0 / MMHG)
 
 
-@pytest.mark.skipif(SOLVER is None, reason="svzerodsolver is not on the PATH or at SVZERODSOLVER")
+@pytest.mark.skipif(SOLVER is None, reason="svzerod is not installed, and SVZERODSOLVER names no solver")
 def test_a_failed_solve_says_so_and_leaves_no_results_behind(tmp_path):
     broken = dict(CONFIG, boundary_conditions=CONFIG["boundary_conditions"][:1])
     config = tmp_path / "solver_0d.json"

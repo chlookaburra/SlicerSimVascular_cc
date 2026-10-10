@@ -17,7 +17,6 @@ set(MODULE_PYTHON_SCRIPTS
   svromsetup/results.py
   svromsetup/solver.py
   svromsetup/testing.py
-  svromsetup/visualization.py
   )
 
 set(MODULE_PYTHON_RESOURCES

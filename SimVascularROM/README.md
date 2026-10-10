@@ -25,18 +25,20 @@ case/
 ## Outside Slicer
 
 The setting up is [`svromsetup/`](svromsetup), which imports numpy, VTK and `svmeshcomplete`,
-and imports [`svromutils`](https://pypi.org/project/svromutils/) only where it is called:
+and imports [`svromutils`](https://pypi.org/project/svromutils/) only where it is called. The
+`rom` extra brings it, and svZeroDSolver as [`svzerod`](https://pypi.org/project/svzerod/):
 
 ```bash
 python -m pip install -e ../SimVascularMeshPrep -e ".[rom]"
 python -m pytest
 ```
 
-Under Slicer, the panel installs `svromutils` itself, the first time it is needed, without the
-VMTK, VTK, numpy and scipy it asks for. Slicer has its own of each, and pip's would replace them.
+Under Slicer, the panel installs both itself, the first time each is needed, so nothing is
+installed by hand. `svzerod` is installed whole. `svromutils` is installed without the VMTK, VTK,
+numpy and scipy it asks for: Slicer has its own of each, and pip's would replace them.
 
 ## Full documentation
 
 [Docs/SimVascularROM.md](../Docs/SimVascularROM.md) covers the panel step by step, several
-inflows, the sign of a flow file, the tools it needs, and why VMTK and the solver are reached
-the way they are.
+inflows, the sign of a flow file, what it installs and why VMTK and the solver are reached the
+way they are, and why svZeroDVisualization is not in it.

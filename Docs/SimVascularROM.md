@@ -17,8 +17,8 @@ check a 3D case against before running it.
 
 The results come back three ways: the pressure over the last cardiac cycle of the caps you
 select, in Slicer's plot view; the centerlines drawn inside the anatomy, coloured by
-cycle-averaged pressure; and a CSV of every cap's flow and pressure, exported from the panel. [svZeroDVisualization](https://simvascular.github.io/documentation/rom_simulation.html#0d-solver-visualization)
-can be opened on the same model from the panel.
+cycle-averaged pressure; and a CSV of every cap's flow and pressure, exported from the panel.
+All three are in Slicer itself, and nothing has to be installed for them.
 
 ## Tutorial
 
@@ -68,8 +68,6 @@ can be opened on the same model from the panel.
    the last cycle: a time column, then a flow (mL/s) and a pressure (mmHg) column per cap. Flow
    is positive the way the cap's condition drives it, into the model at an inflow and out of it
    at an outlet.
-8. **Visualize results** (optional) opens svZeroDVisualization, which draws the network as a
-   graph in your browser, with every block's parameters and results a click away.
 
 The conditions and the source are saved on the mesh, so they come back when you reopen the
 scene, and two anatomies in one scene keep separate conditions. The conditions are shared with
@@ -126,17 +124,14 @@ has already (see [svromutils under Slicer](#svromutils-under-slicer)). **Do not*
 need to install it yourself, `slicer.util.pip_install("--no-deps svromutils")` in the Python
 console is the same thing.
 
-Then, under **Tools** in the panel:
+svZeroDSolver needs no setting up either. It is
+[svzerod](https://pypi.org/project/svzerod/) on PyPI, and the first time you run a simulation,
+Slicer asks to install it, with everything it asks for. It comes as prebuilt wheels for every
+platform, so nothing is compiled, and nothing it brings replaces anything of Slicer's. By hand,
+it is `slicer.util.pip_install("svzerod")`. A build of svZeroDSolver of your own, or one on the
+PATH, is not used: see [Why the solver is a process](#why-the-solver-is-a-process).
 
-- **svzerodsolver**: the svZeroDSolver executable. If left empty, `svzerodsolver` on the PATH
-  is used.
-- **svZeroDVisualization** and **Python environment**: an svZeroDSolver checkout (or its
-  `visualize_simulation.py`), and the `python` of an environment that has `pysvzerod`, `dash`,
-  `plotly`, `pandas`, `networkx` and `pydot` (a conda environment's `bin/python`, for
-  instance). A conda environment built for svZeroDSolver usually has them all.
-
-These are saved in the application's settings rather than the scene: a path belongs to one
-computer, and a scene moves between them.
+Nothing else is needed: the panel has no paths to set.
 
 ## Developers
 
@@ -155,7 +150,7 @@ case.write_surfaces(volume_mesh, names, "case")             # {face id: name}, a
 case.compute_centerlines("case", inlet_face_id=3)
 config = case.write_solver_input("case", {"cap_RSVC": Inflow.steady(20.0), ...}, 3, "cap_RSVC",
                                  case.SimulationParameters(), "fontan")
-solver.run_solver(config, "case/results.csv", "svzerodsolver")
+solver.run_solver(config, "case/results.csv", solver.find_solver())  # pip install svzerod
 faces = results.face_results(config, solver.read_results("case/results.csv"), "cap_RSVC")
 ```
 
@@ -194,13 +189,55 @@ SlicerVMTK's VMTK since the update of September 2026.
 
 ### Why the solver is a process
 
-svZeroDSolver is run as its own executable, not imported as `pysvzerod`. A model it cannot
-solve ends in a C++ abort, which in-process would take Slicer and an unsaved scene with it.
-`pysvzerod` is also a compiled extension that would have to be built for Slicer's own Python.
-Both it and svZeroDVisualization are started with the environment Slicer was launched with
-(`slicer.util.startupEnvironment()`). Slicer's launcher points `PYTHONHOME`, `PYTHONPATH` and
-the library path at its own Python; inherited, another Python finds Slicer's packages and
-none of its own.
+svZeroDSolver is installed into Slicer's Python as `svzerod`, but not imported there. It runs as
+the `svzerodsolver` command the package installs, in a process of its own. It is C++, and a
+model it cannot handle is not always an exception. The released wheels compile its assertions
+out, so an inconsistent model reaches Eigen unchecked. Its command line also ends in C's
+`exit()` when it is called wrongly. Either one, in-process, would take Slicer and an unsaved
+scene with it. A 0D model solves in well under a second, so the round trip through files costs
+nothing.
+
+The command is looked for where pip put it, in the scripts folder beside Slicer's Python
+(`sysconfig.get_path("scripts")`), and never on the PATH. It runs with Slicer's own environment,
+because it is Slicer's Python that runs it. Slicer's launcher points `PYTHONHOME`, `PYTHONPATH`
+and the library path at Slicer's Python, which is right for that command and wrong for any other
+Python's. A `svzerodsolver` found on the PATH belongs to another Python, such as a conda
+environment's, so run with Slicer's environment it would start on Slicer's.
+
+The rejected alternative was keeping the **svzerodsolver** path under Tools, for a build of
+svZeroDSolver of your own. Every machine needed one, and the wheel makes it unnecessary.
+A terminal workflow can still pass any executable to `run_solver`.
+
+### Against svZeroDVisualization, for now
+
+The panel used to have a **Visualize results** button. It opened svZeroDSolver's
+[svZeroDVisualization](https://simvascular.github.io/documentation/rom_simulation.html#0d-solver-visualization),
+a Dash web application that draws the 0D network as a graph in the browser, with each block's
+parameters and results a click away. It was removed because it was the one thing in the panel
+that had to be installed by hand, and in three places:
+
+- **A checkout of svZeroDSolver.** The application is not in the `svzerod` wheel.
+- **A Python environment of its own**, with `svzerod`, `dash`, `plotly`, `pandas`, `networkx`
+  and `pydot`.
+- **Graphviz.** The graph is laid out by Graphviz's `dot` program, which is not a Python package
+  and which pip cannot install. A machine without it never shows the page; the reason is only in
+  the application's log.
+
+Two ways to keep it were rejected:
+
+- **Bundling its scripts here and running them on Slicer's Python.** The panel would install
+  dash, plotly, networkx and pydot into Slicer, 22 packages in all. That removes the checkout
+  and the environment, but not Graphviz without patching the layout. It also leaves a copy of
+  another project's code to keep in step by hand, and runs a web server to draw one graph.
+- **Keeping it as an optional extra.** That means a button that works only on machines that have
+  all three, and fails on the rest with nothing in the panel to say why.
+
+The three views above cover what a 0D run is set up to find. They are the caps' pressures over
+the cycle, the pressure along every branch, and every cap's flow and pressure to take away.
+What is lost is the network graph, and the results of a vessel that does not end at a cap. If
+the second is missed, it belongs in the panel: pick a vessel on the centerlines, and plot its
+flow and pressure in Slicer's own plot view. The first can come back once svZeroDVisualization
+is installable from PyPI with everything it needs.
 
 ### Outlets paired by position
 
@@ -217,9 +254,12 @@ cycles.
 The package's tests are headless (pytest, from `SimVascularROM/`):
 
 ```sh
-python -m pip install svromutils     # outside Slicer, where pip's VMTK and VTK are what you want
-SVZERODSOLVER=/path/to/svzerodsolver python -m pytest
+python -m pip install svromutils svzerod  # outside Slicer, where pip's VMTK and VTK are what you want
+python -m pytest
 ```
+
+The solver is found beside that Python, whether or not its environment is activated. To test a
+build of svZeroDSolver of your own instead, set `SVZERODSOLVER=/path/to/svzerodsolver`.
 
 `svromsetup.testing` builds a capped Y, with arms of different radii so that its two outlets can
 be told apart by their results. The tests that need `svromutils` (and VMTK) or the solver

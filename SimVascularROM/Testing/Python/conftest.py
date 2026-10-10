@@ -4,10 +4,11 @@
 is how both import under Slicer: every scripted module's folder is on its path. Neither needs
 installing for the tests.
 
-`svromutils` is not in this repository; it is on PyPI. The tests that need it -- the centerlines
-and the solver input -- run where it is installed (`pip install svromutils`, which brings pip's
-VMTK with it), and are skipped elsewhere, as are the ones that run svZeroDSolver, which is found
-on the PATH or at `SVZERODSOLVER`.
+`svromutils` and svZeroDSolver are not in this repository; both are on PyPI. The tests that
+need `svromutils` -- the centerlines and the solver input -- run where it is installed (`pip install
+svromutils`, which brings pip's VMTK with it), and are skipped elsewhere. So are the ones that run
+the solver, which is `pip install svzerod`'s `svzerodsolver`, found beside this Python whether or
+not its environment is activated -- or a build of its own, named by `SVZERODSOLVER`.
 """
 
 import sys
