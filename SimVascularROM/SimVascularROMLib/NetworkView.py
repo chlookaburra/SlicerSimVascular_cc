@@ -1,7 +1,6 @@
 """The 0D network drawn as a directed graph, in a Qt view the panel docks beside Slicer's views.
 
-A Qt graphics view rather than a web page or an application of its own -- svZeroDVisualization
-is one, and needs a checkout, a Python environment and Graphviz to run. Slicer's Qt has all a
+A Qt graphics view rather than a web page or an application of its own: Slicer's Qt has all a
 graph of a few dozen blocks needs, so nothing is installed for this, and being inside the
 application is what lets a click on a block plot it in Slicer's own plot view and show it on the
 anatomy, which a separate application cannot do.

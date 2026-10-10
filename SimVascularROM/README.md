@@ -43,4 +43,4 @@ numpy and scipy it asks for: Slicer has its own of each, and pip's would replace
 
 [Docs/SimVascularROM.md](../Docs/SimVascularROM.md) covers the panel step by step, several
 inflows, the sign of a flow file, what it installs and why VMTK and the solver are reached the
-way they are, and why svZeroDVisualization is not in it.
+way they are, and how the network is drawn.

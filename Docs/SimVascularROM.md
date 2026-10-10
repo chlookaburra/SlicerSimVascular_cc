@@ -230,30 +230,19 @@ The rejected alternative was keeping the **svzerodsolver** path under Tools, for
 svZeroDSolver of your own. Every machine needed one, and the wheel makes it unnecessary.
 A terminal workflow can still pass any executable to `run_solver`.
 
-### The network, drawn here rather than by svZeroDVisualization
+### The network, drawn in Slicer
 
-The panel used to have a **Visualize results** button. It opened svZeroDSolver's
-[svZeroDVisualization](https://simvascular.github.io/documentation/rom_simulation.html#0d-solver-visualization),
-a Dash web application that draws the 0D network as a graph in the browser, with each block's
-parameters and results a click away. It was removed because it was the one thing in the panel
-that had to be installed by hand, and in three places:
+**Show network** draws the 0D network in Slicer, so that nothing has to be installed to see it.
+The graph and its layout are `svromsetup.network`, which reads `solver_0d.json` and needs nothing
+but Python; the drawing is a Qt graphics view (`SimVascularROMLib/NetworkView.py`), which Slicer
+has already. Being inside Slicer is also what makes it more than a picture: a click plots in
+Slicer's own plot view and shows the block on the anatomy, which a separate application cannot do.
 
-- **A checkout of svZeroDSolver.** The application is not in the `svzerod` wheel.
-- **A Python environment of its own**, with `svzerod`, `dash`, `plotly`, `pandas`, `networkx`
-  and `pydot`.
-- **Graphviz.** The graph is laid out by Graphviz's `dot` program, which is not a Python package
-  and which pip cannot install. A machine without it never shows the page; the reason is only in
-  the application's log.
-
-**Show network** draws the same graph in Slicer instead. The graph and its layout are
-`svromsetup.network`, which reads `solver_0d.json` and needs nothing but Python; the drawing is
-a Qt graphics view (`SimVascularROMLib/NetworkView.py`), which Slicer has already. Being inside
-Slicer is also what makes it more than a picture: a click plots in Slicer's own plot view and
-shows the block on the anatomy, which a separate application cannot do.
-
-- **The layout is a layered tree, not Graphviz.** A network traced along centerlines is a tree
-  from the source, so a node's layer is its distance from the source, each leaf gets a row of its
-  own, and every other node sits midway between its children. No edge crosses another. The caps
+- **The layout is a layered tree, not Graphviz.** Graphviz is a program, not a Python package, so
+  pip cannot install it, and a machine without it would draw nothing. A network traced along
+  centerlines is a tree from the source, so a node's layer is its distance from the source, each
+  leaf gets a row of its own, and every other node sits midway between its children. No edge
+  crosses another. The caps
   at the ends are moved to one last column, because their long names, scattered through the
   layers, would widen every one of them; in one column they read like the conditions table.
 - **A vessel is shown where its results are drawn.** The stretch of centerline it was cut from is
@@ -264,19 +253,10 @@ shows the block on the anatomy, which a separate application cannot do.
   halo in the yellow Mesh Prep highlights a cap with, which shows on every pressure colour, where
   a yellow outline would not.
 
-Three other ways were rejected:
-
-- **Bundling svZeroDVisualization's scripts here and running them on Slicer's Python.** The panel
-  would install dash, plotly, networkx and pydot into Slicer, 22 packages in all. That removes
-  the checkout and the environment, but not Graphviz without patching the layout. It also leaves
-  a copy of another project's code to keep in step by hand, and runs a web server to draw one
-  graph.
-- **Keeping it as an optional extra.** That means a button that works only on machines that have
-  all three, and fails on the rest with nothing in the panel to say why.
-- **Slicer's web view with a JavaScript graph library** (Cytoscape.js, say). It would look closest
-  to svZeroDVisualization, but leaves third-party JavaScript to keep in the repository, a bridge
-  from JavaScript to Python for every click, and a view that misbehaves on some machines, over
-  remote desktop or without a GPU.
+The rejected alternative was **Slicer's web view with a JavaScript graph library** (Cytoscape.js,
+say). It leaves third-party JavaScript to keep in the repository, a bridge from JavaScript to
+Python for every click, and a view that misbehaves on some machines, over remote desktop or
+without a GPU.
 
 ### Outlets paired by position
 

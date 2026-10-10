@@ -5,10 +5,10 @@ and number, and its results are a row per vessel per time point. Neither shows t
 reads the input as a directed graph, a node for every condition, vessel segment and junction and
 an edge for every connection, and lays it out in layers from the source, for a panel to draw.
 
-The layout is worked out here rather than by Graphviz, which svZeroDVisualization draws with.
-Graphviz is a program, not a Python package, so pip cannot install it, and without it that
-application shows nothing; and a network traced along centerlines is a tree, which a layered
-layout draws as clearly as anything general would.
+The layout is worked out here rather than by Graphviz. Graphviz is a program, not a Python
+package, so pip cannot install it, and a machine without it would draw nothing; and a network
+traced along centerlines is a tree, which a layered layout draws as clearly as anything general
+would.
 
 Edges run the way the model was traced, from the source outwards, which is not always the way
 the blood goes: an inflow prescribed at a centerline's far end -- a Fontan's hepatic veins -- is
