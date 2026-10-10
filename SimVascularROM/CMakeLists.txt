@@ -11,9 +11,12 @@ set(MODULE_PYTHON_SCRIPTS
   # The faces and the conditions table SimVascular MultiPhysics shares with this panel.
   ${MODULE_NAME}Lib/__init__.py
   ${MODULE_NAME}Lib/BoundaryConditionsTable.py
+  # The 0D network drawn as a graph.
+  ${MODULE_NAME}Lib/NetworkView.py
   svromsetup/__init__.py
   svromsetup/boundary_conditions.py
   svromsetup/case.py
+  svromsetup/network.py
   svromsetup/results.py
   svromsetup/solver.py
   svromsetup/testing.py

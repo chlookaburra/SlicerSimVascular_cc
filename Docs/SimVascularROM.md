@@ -15,10 +15,14 @@ resistance, an inductance and a capacitance worked out from its length and cross
 solves in well under a second, which makes it the model to tune boundary conditions on, or to
 check a 3D case against before running it.
 
-The results come back three ways: the pressure over the last cardiac cycle of the caps you
-select, in Slicer's plot view; the centerlines drawn inside the anatomy, coloured by
-cycle-averaged pressure; and a CSV of every cap's flow and pressure, exported from the panel.
-All three are in Slicer itself, and nothing has to be installed for them.
+The results come back four ways:
+- the pressure over the last cardiac cycle of the caps you select, in Slicer's plot view;
+- the centerlines drawn inside the anatomy, coloured by cycle-averaged pressure;
+- a CSV of every cap's flow and pressure, exported from the panel;
+- the 0D network itself, drawn as a directed graph. Click a block to see its values and
+  results: a vessel's are plotted and its stretch of centerline is picked out in 3D.
+
+All four are in Slicer itself, and nothing has to be installed for them.
 
 ## Tutorial
 
@@ -68,6 +72,20 @@ All three are in Slicer itself, and nothing has to be installed for them.
    the last cycle: a time column, then a flow (mL/s) and a pressure (mmHg) column per cap. Flow
    is positive the way the cap's condition drives it, into the model at an inflow and out of it
    at an outlet.
+8. **Show network** draws the 0D network in a dock beside the views. Every boundary condition,
+   vessel segment and junction is a block, coloured by mean pressure on the same scale as the
+   centerlines, with arrows from the source outwards; the caps line up in the last column. A
+   vessel is labelled by its branch, and a letter for its segment if the branch has several:
+   `25b` is `branch25_seg1`. Scroll to zoom and drag to move. Clicking a block shows its values
+   (R, C and L for a vessel, the condition's for a cap) and its mean flow and pressure under the
+   graph:
+   - **A cap** selects its row in the table, which plots it and highlights it in the 3D view;
+     selecting a row in the table selects its block in turn.
+   - **A vessel** plots the pressure at its two ends, and picks out the stretch of centerline it
+     was cut from, as a yellow sleeve around the results.
+
+   The dock can be moved to the other side of the window, or dragged out of it onto a second
+   screen.
 
 The conditions and the source are saved on the mesh, so they come back when you reopen the
 scene, and two anatomies in one scene keep separate conditions. The conditions are shared with
@@ -212,7 +230,7 @@ The rejected alternative was keeping the **svzerodsolver** path under Tools, for
 svZeroDSolver of your own. Every machine needed one, and the wheel makes it unnecessary.
 A terminal workflow can still pass any executable to `run_solver`.
 
-### Against svZeroDVisualization, for now
+### The network, drawn here rather than by svZeroDVisualization
 
 The panel used to have a **Visualize results** button. It opened svZeroDSolver's
 [svZeroDVisualization](https://simvascular.github.io/documentation/rom_simulation.html#0d-solver-visualization),
@@ -227,21 +245,38 @@ that had to be installed by hand, and in three places:
   and which pip cannot install. A machine without it never shows the page; the reason is only in
   the application's log.
 
-Two ways to keep it were rejected:
+**Show network** draws the same graph in Slicer instead. The graph and its layout are
+`svromsetup.network`, which reads `solver_0d.json` and needs nothing but Python; the drawing is
+a Qt graphics view (`SimVascularROMLib/NetworkView.py`), which Slicer has already. Being inside
+Slicer is also what makes it more than a picture: a click plots in Slicer's own plot view and
+shows the block on the anatomy, which a separate application cannot do.
 
-- **Bundling its scripts here and running them on Slicer's Python.** The panel would install
-  dash, plotly, networkx and pydot into Slicer, 22 packages in all. That removes the checkout
-  and the environment, but not Graphviz without patching the layout. It also leaves a copy of
-  another project's code to keep in step by hand, and runs a web server to draw one graph.
+- **The layout is a layered tree, not Graphviz.** A network traced along centerlines is a tree
+  from the source, so a node's layer is its distance from the source, each leaf gets a row of its
+  own, and every other node sits midway between its children. No edge crosses another. The caps
+  at the ends are moved to one last column, because their long names, scattered through the
+  layers, would widen every one of them; in one column they read like the conditions table.
+- **A vessel is shown where its results are drawn.** The stretch of centerline it was cut from is
+  found by the rule that colours the centerlines (`results.vessel_lines`), so the sleeve marks
+  the stretch coloured by that vessel's results.
+- **Clicks are found by the view**, by what is under the mouse, rather than through Qt's item
+  selection, which draws a dashed box of its own over a selected item. A selected block gets a
+  halo in the yellow Mesh Prep highlights a cap with, which shows on every pressure colour, where
+  a yellow outline would not.
+
+Three other ways were rejected:
+
+- **Bundling svZeroDVisualization's scripts here and running them on Slicer's Python.** The panel
+  would install dash, plotly, networkx and pydot into Slicer, 22 packages in all. That removes
+  the checkout and the environment, but not Graphviz without patching the layout. It also leaves
+  a copy of another project's code to keep in step by hand, and runs a web server to draw one
+  graph.
 - **Keeping it as an optional extra.** That means a button that works only on machines that have
   all three, and fails on the rest with nothing in the panel to say why.
-
-The three views above cover what a 0D run is set up to find. They are the caps' pressures over
-the cycle, the pressure along every branch, and every cap's flow and pressure to take away.
-What is lost is the network graph, and the results of a vessel that does not end at a cap. If
-the second is missed, it belongs in the panel: pick a vessel on the centerlines, and plot its
-flow and pressure in Slicer's own plot view. The first can come back once svZeroDVisualization
-is installable from PyPI with everything it needs.
+- **Slicer's web view with a JavaScript graph library** (Cytoscape.js, say). It would look closest
+  to svZeroDVisualization, but leaves third-party JavaScript to keep in the repository, a bridge
+  from JavaScript to Python for every click, and a view that misbehaves on some machines, over
+  remote desktop or without a GPU.
 
 ### Outlets paired by position
 

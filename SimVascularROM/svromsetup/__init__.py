@@ -11,6 +11,8 @@ read back per face and mapped onto the centerlines, which is where anyone looks 
 - `case`: the case folder, and the calls into `svromutils`, held to what they were asked
   for afterwards.
 - `solver`: svZeroDSolver (`svzerod` on PyPI) run as a process, and its CSV read.
+- `network`: the solver input as a directed graph, laid out in layers from the source, for a
+  panel to draw.
 - `results`: per-face flows and pressures, and the centerlines coloured by them.
 
 Nothing here imports `slicer`. `svmeshcomplete` writes the faces, and `svromutils` --
@@ -18,7 +20,7 @@ which imports VMTK -- is imported only where it is called, so everything but the
 and the solver input runs with numpy and VTK alone, and so do the tests of it.
 """
 
-from svromsetup import boundary_conditions, case, results, solver
+from svromsetup import boundary_conditions, case, network, results, solver
 from svromsetup.boundary_conditions import (
     INFLOW,
     KINDS,
@@ -37,6 +39,7 @@ from svromsetup.solver import SolverError, find_solver, read_results, run_solver
 __all__ = [
     "boundary_conditions",
     "case",
+    "network",
     "results",
     "solver",
     "INFLOW",

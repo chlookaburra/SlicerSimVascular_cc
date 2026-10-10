@@ -332,6 +332,19 @@
         </property>
        </widget>
       </item>
+      <item>
+       <widget class="QPushButton" name="networkButton">
+        <property name="enabled">
+         <bool>false</bool>
+        </property>
+        <property name="text">
+         <string>Show network</string>
+        </property>
+        <property name="toolTip">
+         <string>Draw the 0D network as a directed graph beside the views: every vessel segment, junction and boundary condition, coloured by mean pressure. Click a block for its values and results; a vessel is plotted and picked out on the centerlines, a cap is selected in the table.</string>
+        </property>
+       </widget>
+      </item>
      </layout>
     </widget>
    </item>

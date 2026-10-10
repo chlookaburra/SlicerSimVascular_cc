@@ -10,7 +10,8 @@ A 0D model is cheap to solve and expensive to set up. The centerlines have to be
 inlet and split into branches, every cap needs a boundary condition under the name its face
 goes by, and the solver's results are per vessel segment, `branch14_seg2`. Someone then has to
 work out which of those is the right pulmonary artery. This panel does the bookkeeping on both
-sides: the conditions in, by face name; the results out, by face name and in place.
+sides: the conditions in, by face name; the results out, by face name and in place; and the
+network it solved, drawn as a graph whose blocks can be clicked for their values and results.
 
 ```
 case/

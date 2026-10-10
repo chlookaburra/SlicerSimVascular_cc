@@ -10,7 +10,7 @@ from vtk.util.numpy_support import vtk_to_numpy
 pytest.importorskip("vmtk")
 pytest.importorskip("svromutils")
 
-from svromsetup import case, results, solver, testing
+from svromsetup import case, network, results, solver, testing
 from svromsetup.boundary_conditions import Inflow, RCR, Resistance
 
 SOLVER = solver.find_solver(os.environ.get("SVZERODSOLVER"))
@@ -62,6 +62,27 @@ def test_each_outlet_is_named_after_the_cap_its_centerline_ends_at(y_case):
         nearest = min(by_name, key=lambda name: np.linalg.norm(by_name[name] - end_of(
             centerlines.geometry, branch)))
         assert face == nearest, f"{outlet} is on the vessel that ends at {nearest}"
+
+
+def test_the_network_puts_each_outlet_after_the_vessel_that_reaches_its_cap(y_case):
+    """Asked geometrically too: the graph names a condition after its cap, and the vessel it hangs
+    off has to end at that cap in space, or the graph is a right-looking picture of the wrong
+    model."""
+    directory, centerlines = y_case
+    config = case.write_solver_input(
+        directory, {"cap_inlet": Inflow.steady(10.0), "cap_right": RCR(100.0, 1e-4, 1000.0, 0.0),
+                    "cap_left": Resistance(3000.0)},
+        testing.INLET_ID, "cap_inlet", case.SimulationParameters(cardiac_cycles=2, points_per_cycle=20), "y")
+    net = network.network_from_config(config, "cap_inlet")
+    assert net.nodes[net.root].label == "cap_inlet"
+    caps = {testing.NAMES[face_id]: centre for face_id, centre in testing.cap_centres().items()}
+    for cap in ("cap_left", "cap_right"):
+        condition = net.node_for_cap(cap)
+        (vessel,) = net.parents(condition.key)
+        lines = results.vessel_lines(centerlines.geometry, config, net.nodes[vessel].vessel)
+        points = vtk_to_numpy(lines.GetPoints().GetData())
+        far = points[np.argmax(np.linalg.norm(points - caps["cap_inlet"], axis=1))]
+        assert min(caps, key=lambda name: np.linalg.norm(caps[name] - far)) == cap
 
 
 def test_the_solver_input_says_what_was_set_up(y_case):

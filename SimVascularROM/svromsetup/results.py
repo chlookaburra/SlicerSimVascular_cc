@@ -92,11 +92,21 @@ def face_results(config, results, inlet_name: str) -> list:
             flow, pressure = result.flow_out, result.pressure_out
             if bc_type == "FLOW":
                 flow = -flow
-        prefix = f"{bc_type}_"
-        name = inlet_name if bc_name == "INFLOW" else (
-            bc_name[len(prefix):] if bc_name.startswith(prefix) else bc_name)
-        found.append(FaceResult(name, bc_name, bc_type, vessel, end, result.time, flow, pressure))
+        found.append(FaceResult(cap_name(bc_name, bc_type, inlet_name), bc_name, bc_type, vessel,
+                                end, result.time, flow, pressure))
     return found
+
+
+def cap_name(bc_name: str, bc_type: str, inlet_name: str) -> str:
+    """The face a condition in the solver input is on.
+
+    The package names a condition after its kind and its face, `RCR_cap_lpa_a`, except the
+    inlet's, which it calls `INFLOW` whatever the face is -- so that one is the caller's to say.
+    """
+    if bc_name == "INFLOW":
+        return inlet_name
+    prefix = f"{bc_type}_"
+    return bc_name[len(prefix):] if bc_name.startswith(prefix) else bc_name
 
 
 def write_face_results_csv(path, face_results) -> Path:
@@ -141,37 +151,18 @@ def centerline_results(centerline, config, results):
     copy = vtk.vtkPolyData()
     copy.DeepCopy(centerline)
     point_data = copy.GetPointData()
-    branch_ids = vtk_to_numpy(point_data.GetArray("BranchId")).astype(np.int64)
-    path = vtk_to_numpy(point_data.GetArray("Path")).astype(float)
 
-    segments = {}
-    for vessel in config.get("vessels", []):
-        match = _VESSEL_NAME.match(vessel["vessel_name"])
-        if match and vessel["vessel_name"] in results:
-            segments.setdefault(int(match.group(1)), []).append(
-                (int(match.group(2)), float(vessel["vessel_length"]), results[vessel["vessel_name"]]))
-
-    pressure = np.full(len(branch_ids), np.nan)
-    flow = np.full(len(branch_ids), np.nan)
-    for branch, pieces in segments.items():
-        points = np.flatnonzero(branch_ids == branch)
-        if not len(points):
-            continue
-        pieces.sort(key=lambda piece: piece[0])
-        lengths = np.array([length for _index, length, _result in pieces])
-        bounds = np.concatenate([[0.0], np.cumsum(lengths)]) / lengths.sum()
-        along = path[points] - path[points].min()
-        along = along / along.max() if along.max() > 0 else np.zeros_like(along)
-        which = np.clip(np.searchsorted(bounds, along, side="right") - 1, 0, len(pieces) - 1)
-        for index, (_segment, _length, result) in enumerate(pieces):
-            here = which == index
-            span = bounds[index + 1] - bounds[index]
-            fraction = (along[here] - bounds[index]) / span if span > 0 else 0.0
-            p_in = _cycle_mean(result.time, result.pressure_in)
-            p_out = _cycle_mean(result.time, result.pressure_out)
-            pressure[points[here]] = (p_in + (p_out - p_in) * fraction) / MMHG
-            flow[points[here]] = (_cycle_mean(result.time, result.flow_in)
-                                  + _cycle_mean(result.time, result.flow_out)) / 2.0
+    names, fractions = _segment_positions(copy, config, only=set(results))
+    pressure = np.full(len(names), np.nan)
+    flow = np.full(len(names), np.nan)
+    for name in set(names) - {""}:
+        result = results[name]
+        here = names == name
+        p_in = _cycle_mean(result.time, result.pressure_in)
+        p_out = _cycle_mean(result.time, result.pressure_out)
+        pressure[here] = (p_in + (p_out - p_in) * fractions[here]) / MMHG
+        flow[here] = (_cycle_mean(result.time, result.flow_in)
+                      + _cycle_mean(result.time, result.flow_out)) / 2.0
 
     known = np.flatnonzero(np.isfinite(pressure))
     unknown = np.flatnonzero(~np.isfinite(pressure))
@@ -186,6 +177,90 @@ def centerline_results(centerline, config, results):
         array.SetName(name)
         point_data.AddArray(array)
     return copy
+
+
+def vessel_lines(centerline, config, vessel_name: str):
+    """The stretch of the centerlines one vessel was cut from, as lines: which vessel it is, shown.
+
+    By the same rule as `centerline_results`, so that a vessel picked out on the anatomy is the
+    stretch its results were coloured on. Lines rather than points, one per run of the vessel's
+    points along each centerline, because a branch is traced once per centerline through it and
+    its points come in parallel runs: joined in one polyline, they would zigzag between them. The
+    inscribed sphere radius goes with them, for drawing the stretch as the vessel it is.
+    """
+    if not isinstance(config, dict):
+        config = json.loads(Path(config).read_text())
+    names, _fractions = _segment_positions(centerline, config)
+    inside = names == vessel_name
+    radius = centerline.GetPointData().GetArray("MaximumInscribedSphereRadius")
+    points, lines, radii, kept = vtk.vtkPoints(), vtk.vtkCellArray(), vtk.vtkDoubleArray(), {}
+    radii.SetName("MaximumInscribedSphereRadius")
+
+    def add(run):
+        lines.InsertNextCell(len(run))
+        for point in run:
+            if point not in kept:
+                kept[point] = points.InsertNextPoint(centerline.GetPoint(point))
+                radii.InsertNextValue(radius.GetValue(point) if radius is not None else 0.0)
+            lines.InsertCellPoint(kept[point])
+
+    for cell in range(centerline.GetNumberOfCells()):
+        ids = centerline.GetCell(cell).GetPointIds()
+        run = []
+        for index in range(ids.GetNumberOfIds()):
+            point = ids.GetId(index)
+            if inside[point]:
+                run.append(point)
+                continue
+            if len(run) >= 2:
+                add(run)
+            run = []
+        if len(run) >= 2:
+            add(run)
+    lines_only = vtk.vtkPolyData()
+    lines_only.SetPoints(points)
+    lines_only.SetLines(lines)
+    lines_only.GetPointData().AddArray(radii)
+    return lines_only
+
+
+def _segment_positions(centerline, config, only=None):
+    """Which vessel each centerline point is in, and how far along it: (names, fractions).
+
+    A branch's vessels are laid end to end along it in proportion to their lengths, so a point's
+    place along its branch's `Path` says which it is in. A point inside a bifurcation is in no
+    branch, and gets the name "". `only` limits it to the vessels named, which the others' points
+    then share in proportion, as when a vessel has no results.
+    """
+    point_data = centerline.GetPointData()
+    branch_ids = vtk_to_numpy(point_data.GetArray("BranchId")).astype(np.int64)
+    path = vtk_to_numpy(point_data.GetArray("Path")).astype(float)
+    segments = {}
+    for vessel in config.get("vessels", []):
+        name = vessel["vessel_name"]
+        match = _VESSEL_NAME.match(name)
+        if match and (only is None or name in only):
+            segments.setdefault(int(match.group(1)), []).append(
+                (int(match.group(2)), float(vessel["vessel_length"]), name))
+
+    names = np.full(len(branch_ids), "", dtype=object)
+    fractions = np.zeros(len(branch_ids))
+    for branch, pieces in segments.items():
+        points = np.flatnonzero(branch_ids == branch)
+        if not len(points):
+            continue
+        pieces.sort(key=lambda piece: piece[0])
+        lengths = np.array([length for _index, length, _name in pieces])
+        bounds = np.concatenate([[0.0], np.cumsum(lengths)]) / lengths.sum()
+        along = path[points] - path[points].min()
+        along = along / along.max() if along.max() > 0 else np.zeros_like(along)
+        which = np.clip(np.searchsorted(bounds, along, side="right") - 1, 0, len(pieces) - 1)
+        for index, (_segment, _length, name) in enumerate(pieces):
+            here = which == index
+            span = bounds[index + 1] - bounds[index]
+            names[points[here]] = name
+            fractions[points[here]] = (along[here] - bounds[index]) / span if span > 0 else 0.0
+    return names, fractions
 
 
 def _cycle_mean(time, values) -> float:

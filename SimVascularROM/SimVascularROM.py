@@ -13,7 +13,8 @@ cap in a table, an inflow's waveform loaded by double-clicking its values. The c
 from SlicerVMTK, traced from the inlet the operator picks; the model is built and written by
 `svromutils`; svZeroDSolver (`svzerod`) is run as a process; and what it says comes back as a plot
 over the cycle of the caps selected in the table, the centerlines coloured by pressure, laid
-inside the anatomy they came from, and a CSV of every cap to take away.
+inside the anatomy they came from, a CSV of every cap to take away, and the 0D network itself,
+drawn as a graph whose every block can be clicked for its values and results.
 
 ## Where the work is
 
@@ -78,7 +79,7 @@ from slicer.util import VTKObservationMixin
 
 from svmeshcomplete.face_table import sanitized
 from svromsetup import boundary_conditions as bcs
-from svromsetup import case, results, solver
+from svromsetup import case, network, results, solver
 
 # The faces and the table of their conditions, shared with SimVascular MultiPhysics -- the names
 # are Mesh Prep's and the conditions one set per mesh, whichever solver they are written for.
@@ -93,6 +94,7 @@ from SimVascularROMLib.BoundaryConditionsTable import (  # noqa: F401 (the tests
     NamedMeshFaces,
     clearHighlight,
 )
+from SimVascularROMLib.NetworkView import NetworkView
 
 # The cap the centerlines start at, kept on the mesh beside its conditions. The 0D panel's own:
 # a 3D model has no source.
@@ -104,6 +106,18 @@ CENTERLINES_REFERENCE = "ROMCenterlines"
 RESULTS_MODEL_REFERENCE = "ROMResultsModel"
 RESULTS_TABLE_REFERENCE = "ROMResultsTable"
 RESULTS_CHART_REFERENCE = "ROMResultsChart"
+# One vessel's results, filled again whenever a vessel is clicked in the network, so that plotting
+# a vessel is plotting a table like a cap is, and clicking through fifty of them leaves one table
+# and one pair of plot series rather than fifty.
+VESSEL_TABLE_REFERENCE = "ROMVesselTable"
+VESSEL_COLUMNS = (("inlet", "pressure_in"), ("outlet", "pressure_out"))
+
+# The stretch of centerline a vessel clicked in the network was cut from, drawn as a sleeve round
+# the results' tubes. Not saved with the scene: it is a way of looking, not something the case has.
+SELECTED_VESSEL_NODE_NAME = "ROM selected vessel"
+SELECTED_VESSEL_RADIUS_FACTOR = 1.25
+SELECTED_VESSEL_OPACITY = 0.6
+NETWORK_DOCK_OBJECT_NAME = "SimVascularROMNetworkDock"
 
 # The rest of the panel's state, which is the scene's.
 INPUT_MESH_REFERENCE = "InputMesh"
@@ -267,6 +281,18 @@ class SimVascularROMWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         self._solverFilesKey = None
         self._faceResults = []
         self._resultsNote = ""
+        # What the network view draws: the solver input and results it was read from, and the
+        # centerlines a vessel clicked in it is shown on. Set with the results, and forgotten
+        # with them.
+        self._network = None
+        self._config = None
+        self._vesselResults = {}
+        self._centerlines = None
+        self.networkView = None
+        self.networkDock = None
+        # Set while the network view is selecting a cap in the table, so that the table selecting
+        # it in the network view in turn does not start the round again.
+        self._selectingFromNetwork = False
 
     def setup(self):
         ScriptedLoadableModuleWidget.setup(self)
@@ -277,7 +303,7 @@ class SimVascularROMWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         self.logic = SimVascularROMLogic()
         self.conditionsTable = BoundaryConditionsTable(
             self.ui.facesTable, self.ui.valuesHintLabel, self.setStatus,
-            changed=self.updateButtons, selectionChanged=lambda _faceIds: self.plotSelected(),
+            changed=self.updateButtons, selectionChanged=self.onCapsSelected,
             startDirectory=lambda: self.ui.caseDirectoryPathLineEdit.currentPath)
         self.conditionsTable.emphasisNote = _("The source: the centerlines start here.")
 
@@ -288,6 +314,7 @@ class SimVascularROMWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         self.ui.createSolverFilesButton.connect("clicked(bool)", self.onCreateSolverFiles)
         self.ui.runButton.connect("clicked(bool)", self.onRun)
         self.ui.exportButton.connect("clicked(bool)", self.onExport)
+        self.ui.networkButton.connect("clicked(bool)", self.onShowNetwork)
         self.ui.caseDirectoryPathLineEdit.connect("currentPathChanged(QString)",
                                                   self.onSimulationParameterChanged)
         for spinBox in (self.ui.densitySpinBox, self.ui.viscositySpinBox):
@@ -310,6 +337,11 @@ class SimVascularROMWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
 
     def cleanup(self):
         clearHighlight()
+        self.logic.clearSelectedVessel()
+        if self.networkDock is not None:
+            slicer.util.mainWindow().removeDockWidget(self.networkDock)
+            self.networkDock.deleteLater()
+            self.networkDock = None
         self.removeObservers()
 
     def onSceneEndImport(self, caller=None, event=None):
@@ -319,6 +351,7 @@ class SimVascularROMWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         self._centerlinesKey = None
         self._solverFilesKey = None
         self._faceResults = []
+        self._network = None
         self.onMeshChanged()
 
     # -- state that is saved: the conditions on the mesh, the rest on the scene ---
@@ -606,6 +639,7 @@ class SimVascularROMWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         except Exception as error:
             logging.warning("SimVascular ROM could not read the results in %s: %s", directory, error)
             self._faceResults = []
+            self._network = None
         self.populateResults()
 
     def showResults(self, directory):
@@ -614,7 +648,13 @@ class SimVascularROMWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         solved = solver.read_results(os.path.join(directory, case.RESULTS_NAME))
         self._faceResults = results.face_results(config, solved, self.capName(self._inletFaceId))
         self._resultsNote = ""
+        with open(config) as handle:
+            self._config = json.load(handle)
+        self._vesselResults = solved
+        self._network = network.network_from_config(self._config, self.capName(self._inletFaceId))
         centerlines = case.read_centerlines(directory)
+        self._centerlines = centerlines
+        self.logic.clearSelectedVessel()
         if centerlines is not None:
             coloured = results.centerline_results(centerlines, config, solved)
             self.logic.showResults(node, coloured, RESULTS_ARRAY_NAME)
@@ -625,8 +665,113 @@ class SimVascularROMWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
     # -- results -------------------------------------------------------------------------
     def populateResults(self):
         self.ui.exportButton.enabled = bool(self._faceResults)
+        self.ui.networkButton.enabled = bool(self._faceResults) and self._network is not None
         if self._resultsNote:
             self.setStatus(self._resultsNote)
+        if self.networkDock is not None and self.networkDock.visible:
+            self.drawNetwork()
+
+    def onCapsSelected(self, faceIds):
+        """A selection in the conditions table: plot it, and select it in the network too."""
+        self.plotSelected()
+        if self._selectingFromNetwork or self.networkView is None or self._network is None:
+            return
+        self.logic.clearSelectedVessel()
+        node = self._network.node_for_cap(self.capName(faceIds[0])) if len(faceIds) == 1 else None
+        self.networkView.select(node.key if node is not None else None,
+                                self.describeBlock(node.key) if node is not None else "")
+
+    # -- the network -----------------------------------------------------------------------
+    def onShowNetwork(self):
+        with slicer.util.tryWithErrorDisplay(_("The network could not be shown.")):
+            dock = self.ensureNetworkDock()
+            dock.show()
+            dock.raise_()
+            self.drawNetwork()
+            # Fitted again once the dock has a size, which it has only after it has been shown.
+            qt.QTimer.singleShot(0, self.networkView.fit)
+
+    def ensureNetworkDock(self):
+        """The dock the network is drawn in, beside the views, made the first time it is asked for.
+
+        A dock rather than a section of this panel: a Fontan's network is fifty blocks tall, which
+        the panel has no room for, and a dock can be moved to the other side, or out of the
+        window onto a second screen.
+        """
+        if self.networkDock is None:
+            mainWindow = slicer.util.mainWindow()
+            self.networkView = NetworkView(self.onNetworkBlockSelected)
+            dock = qt.QDockWidget(_("0D network"), mainWindow)
+            dock.objectName = NETWORK_DOCK_OBJECT_NAME
+            dock.setWidget(self.networkView.widget)
+            mainWindow.addDockWidget(qt.Qt.RightDockWidgetArea, dock)
+            mainWindow.resizeDocks([dock], [460], qt.Qt.Horizontal)
+            self.networkDock = dock
+        return self.networkDock
+
+    def drawNetwork(self):
+        if self.networkView is None:
+            return
+        if self._network is None or not self._faceResults:
+            self.networkView.clear(_("Run the simulation, and its network is drawn here."))
+            return
+        pressures = network.mean_pressures(self._network, self._vesselResults, self._faceResults)
+        low, high = (min(pressures.values()), max(pressures.values())) if pressures else (0.0, 0.0)
+        colours = {key: self.logic.pressureColour(value, low, high) for key, value in pressures.items()}
+        tooltips = {key: self.describeBlock(key) for key in self._network.nodes}
+        self.networkView.setNetwork(self._network, colours, tooltips, _(
+            "Coloured by mean pressure, {low:.2f} to {high:.2f} mmHg, as the centerlines are. A "
+            "vessel is labelled by its branch, and a letter for its segment if it has several: 25b "
+            "is branch25_seg1. Scroll to zoom, drag to move, click a block for its values and "
+            "results.").format(
+                low=low, high=high))
+        selected = self.conditionsTable.selectedFaceIds()
+        if len(selected) == 1:
+            self.onCapsSelected(selected)
+
+    def describeBlock(self, key):
+        return network.describe(self._network, key, self._vesselResults, self._faceResults)
+
+    def onNetworkBlockSelected(self, key):
+        """A block clicked in the network: say what it is, and show it in the plot and the anatomy.
+
+        A condition is shown as its cap is when its row is selected -- by selecting that row, so
+        that the table, the plot and the 3D view agree on what is selected. A vessel has no row:
+        its two ends' pressures are plotted, and the stretch of centerline it was cut from is
+        picked out on the results.
+        """
+        node = self._network.nodes.get(key) if (key and self._network is not None) else None
+        self.networkView.setInfo(self.describeBlock(key) if node is not None else "")
+        if node is not None and node.kind == network.BOUNDARY:
+            self.logic.clearSelectedVessel()
+            faceId = next((faceId for faceId, name, _geometry in self.conditionsTable.caps
+                           if name == node.cap), None)
+            if faceId is not None:
+                self._selectingFromNetwork = True
+                try:
+                    self.ui.facesTable.selectRow(self.conditionsTable.rowOf(faceId))
+                finally:
+                    self._selectingFromNetwork = False
+            return
+        self._selectingFromNetwork = True
+        try:
+            self.ui.facesTable.clearSelection()
+        finally:
+            self._selectingFromNetwork = False
+        clearHighlight()
+        meshNode = self.ui.inputMeshSelector.currentNode()
+        if node is None or node.kind != network.VESSEL or meshNode is None:
+            self.logic.clearSelectedVessel()
+            return
+        result = self._vesselResults.get(node.vessel)
+        if result is not None:
+            table = self.logic.writeVesselTable(meshNode, result)
+            self.logic.plotColumns(meshNode, table, [
+                (f"{node.vessel} {end}", self.logic.vesselColumn(end)) for end, _field in VESSEL_COLUMNS],
+                RESULTS_QUANTITY)
+        if self._centerlines is not None:
+            self.logic.showSelectedVessel(
+                meshNode, results.vessel_lines(self._centerlines, self._config, node.vessel))
 
     def plotSelected(self):
         """Plot the caps selected in the boundary conditions table, or the inlet if none are.
@@ -871,11 +1016,108 @@ class SimVascularROMLogic(ScriptedLoadableModuleLogic):
         node.SetAndObserveTable(table)
         return node
 
+    @staticmethod
+    def vesselColumn(end):
+        return f"{end} pressure [mmHg]"
+
+    def writeVesselTable(self, meshNode, result):
+        """One vessel's pressures and flows at its two ends, over the last cycle, for plotting."""
+        node = self.referencedNode(meshNode, VESSEL_TABLE_REFERENCE, "vtkMRMLTableNode",
+                                   "ROM vessel results")
+        table = vtk.vtkTable()
+        columns = [(TIME_COLUMN, result.time)]
+        for end, field in VESSEL_COLUMNS:
+            columns.append((self.vesselColumn(end), getattr(result, field) / bcs.MMHG))
+        columns += [("inlet flow [mL/s]", result.flow_in), ("outlet flow [mL/s]", result.flow_out)]
+        for name, values in columns:
+            array = numpy_to_vtk(np.asarray(values, dtype=float), deep=True)
+            array.SetName(name)
+            table.AddColumn(array)
+        node.SetAndObserveTable(table)
+        return node
+
+    @staticmethod
+    def selectedVesselNode():
+        """The selected vessel's node, which being hidden is not found by name lookups."""
+        for index in range(slicer.mrmlScene.GetNumberOfNodesByClass("vtkMRMLModelNode")):
+            node = slicer.mrmlScene.GetNthNodeByClass(index, "vtkMRMLModelNode")
+            if node.GetName() == SELECTED_VESSEL_NODE_NAME:
+                return node
+        return None
+
+    def showSelectedVessel(self, meshNode, lines):
+        """Pick out a vessel on the anatomy: its stretch of centerline, as a sleeve round the
+        results' tubes -- a little wider than the inscribed sphere they are drawn at, and see-through,
+        so that the pressure colour inside it still shows."""
+        radius = lines.GetPointData().GetArray("MaximumInscribedSphereRadius")
+        scaled = vtk.vtkPolyData()
+        scaled.ShallowCopy(lines)
+        tube = vtk.vtkTubeFilter()
+        if radius is not None and radius.GetNumberOfTuples():
+            array = numpy_to_vtk(vtk_to_numpy(radius) * SELECTED_VESSEL_RADIUS_FACTOR, deep=True)
+            array.SetName("SleeveRadius")
+            scaled.GetPointData().AddArray(array)
+            scaled.GetPointData().SetActiveScalars("SleeveRadius")
+            tube.SetVaryRadiusToVaryRadiusByAbsoluteScalar()
+        else:
+            tube.SetRadius(1.0)
+        tube.SetInputData(scaled)
+        tube.SetNumberOfSides(20)
+        tube.CappingOn()
+        tube.Update()
+
+        node = self.selectedVesselNode()
+        if node is None:
+            node = slicer.mrmlScene.CreateNodeByClass("vtkMRMLModelNode")
+            node.SetName(SELECTED_VESSEL_NODE_NAME)
+            node.SetSaveWithScene(False)
+            node.SetHideFromEditors(True)
+            node = slicer.mrmlScene.AddNode(node)
+            node.CreateDefaultDisplayNodes()
+            node.GetDisplayNode().SetSaveWithScene(False)
+            node.GetDisplayNode().SetHideFromEditors(True)
+        node.SetAndObserveMesh(tube.GetOutput())
+        node.SetAndObserveTransformNodeID(meshNode.GetTransformNodeID())
+        display = node.GetDisplayNode()
+        # Mesh Prep's face highlight, which a selected cap is shown in: one colour for a selection,
+        # whichever kind of block it is. Imported here, as the conditions table imports Mesh Prep's
+        # highlighting, so that loading this module does not depend on Mesh Prep's loading first.
+        from SimVascularMeshPrep import HIGHLIGHT_COLOR
+        display.SetColor(*HIGHLIGHT_COLOR)
+        display.SetOpacity(SELECTED_VESSEL_OPACITY)
+        display.SetScalarVisibility(False)
+        display.SetVisibility(True)
+        return node
+
+    def clearSelectedVessel(self):
+        node = self.selectedVesselNode()
+        if node is not None:
+            slicer.mrmlScene.RemoveNode(node)
+
+    @staticmethod
+    def pressureColour(value, low, high):
+        """The colour the results' tubes give `value` over `low`..`high`, as (r, g, b) in 0..1,
+        so that a block in the network and its stretch of centerline are the same colour."""
+        colourNode = next((slicer.mrmlScene.GetNodeByID(nodeId) for nodeId in RESULTS_COLOR_NODES
+                           if slicer.mrmlScene.GetNodeByID(nodeId) is not None), None)
+        if colourNode is None:
+            return None
+        fraction = 0.5 if high <= low else min(max((value - low) / (high - low), 0.0), 1.0)
+        rgba = [0.0, 0.0, 0.0, 0.0]
+        colourNode.GetColor(int(round(fraction * (colourNode.GetNumberOfColors() - 1))), rgba)
+        return tuple(rgba[:3])
+
     def plotFaces(self, meshNode, names, quantity):
         """Plot `quantity` over the last cycle for the named caps, and put the plot in the layout."""
         tableNode = meshNode.GetNodeReference(RESULTS_TABLE_REFERENCE)
         if tableNode is None:
             return None
+        unit = "mmHg" if quantity == "Pressure" else "mL/s"
+        return self.plotColumns(meshNode, tableNode,
+                                [(name, f"{name} {quantity.lower()} [{unit}]") for name in names], quantity)
+
+    def plotColumns(self, meshNode, tableNode, series, quantity):
+        """Plot (legend, column) pairs of `tableNode` over the last cycle, in the mesh's plot."""
         chart = self.referencedNode(meshNode, RESULTS_CHART_REFERENCE, "vtkMRMLPlotChartNode",
                                     "ROM plot")
         unit = "mmHg" if quantity == "Pressure" else "mL/s"
@@ -883,21 +1125,22 @@ class SimVascularROMLogic(ScriptedLoadableModuleLogic):
         chart.SetXAxisTitle(TIME_COLUMN)
         chart.SetYAxisTitle(f"{quantity.lower()} [{unit}]")
         chart.RemoveAllPlotSeriesNodeIDs()
-        for index, name in enumerate(names):
-            column = f"{name} {quantity.lower()} [{unit}]"
-            series = self.plotSeries(tableNode, column)
-            if series is None:
-                # Named after the cap alone, which is what the plot's legend shows; found again by
-                # the table and column it plots, which is what makes it this cap's.
-                series = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLPlotSeriesNode", name)
-                series.SetAttribute(PLOT_COLUMN_ATTRIBUTE, column)
-                series.SetAndObserveTableNodeID(tableNode.GetID())
-            series.SetXColumnName(TIME_COLUMN)
-            series.SetYColumnName(column)
-            series.SetPlotType(slicer.vtkMRMLPlotSeriesNode.PlotTypeScatter)
-            series.SetMarkerStyle(slicer.vtkMRMLPlotSeriesNode.MarkerStyleNone)
-            series.SetColor(*PLOT_COLORS[index % len(PLOT_COLORS)])
-            chart.AddAndObservePlotSeriesNodeID(series.GetID())
+        for index, (name, column) in enumerate(series):
+            plotted = self.plotSeries(tableNode, column)
+            if plotted is None:
+                # Found again by the table and column it plots, which is what makes it this cap's
+                # or this vessel's end; named for what the plot's legend is to show.
+                plotted = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLPlotSeriesNode", name)
+                plotted.SetAttribute(PLOT_COLUMN_ATTRIBUTE, column)
+                plotted.SetAndObserveTableNodeID(tableNode.GetID())
+            # Named again every time: the vessel table's columns are every vessel's in turn.
+            plotted.SetName(name)
+            plotted.SetXColumnName(TIME_COLUMN)
+            plotted.SetYColumnName(column)
+            plotted.SetPlotType(slicer.vtkMRMLPlotSeriesNode.PlotTypeScatter)
+            plotted.SetMarkerStyle(slicer.vtkMRMLPlotSeriesNode.MarkerStyleNone)
+            plotted.SetColor(*PLOT_COLORS[index % len(PLOT_COLORS)])
+            chart.AddAndObservePlotSeriesNodeID(plotted.GetID())
         slicer.modules.plots.logic().ShowChartInLayout(chart)
         # A maximized view -- a scene can be saved with its 3D view maximized -- covers the plot
         # the line above switched the layout to, and then asking for a plot shows nothing at all.
@@ -932,6 +1175,19 @@ class SimVascularROMTest(ScriptedLoadableModuleTest):
         self.test_aMeshWithoutNamesIsSentToMeshPrep()
         self.setUp()
         self.test_aWholeCaseOnAY()
+
+    @staticmethod
+    def clickBlock(view, key):
+        """A click on a block's middle, sent through Qt as a person's is, press and release."""
+        view.view.ensureVisible(view.items[key])
+        slicer.app.processEvents()
+        point = view.view.mapFromScene(view.items[key].sceneBoundingRect().center())
+        onScreen = view.view.viewport().mapToGlobal(point)
+        for kind, buttons in ((qt.QEvent.MouseButtonPress, qt.Qt.LeftButton),
+                              (qt.QEvent.MouseButtonRelease, qt.Qt.NoButton)):
+            qt.QApplication.sendEvent(view.view.viewport(), qt.QMouseEvent(
+                kind, qt.QPointF(point), qt.QPointF(onScreen), qt.Qt.LeftButton, buttons, qt.Qt.NoModifier))
+            slicer.app.processEvents()
 
     def namedY(self, name="Y"):
         from svromsetup import testing
@@ -1090,6 +1346,28 @@ class SimVascularROMTest(ScriptedLoadableModuleTest):
             header = handle.readline().strip().split(",")
         self.assertEqual(header[0], "time [s]")
         self.assertIn("cap_left flow [mL/s]", header)
+
+        # The network: every block drawn; a cap's block selects the cap's row, which is what
+        # plots it and shows it on the anatomy; a vessel's plots its two ends and picks it out on
+        # the centerlines; and the table selecting a cap selects its block.
+        widget.onShowNetwork()
+        view = widget.networkView
+        self.assertEqual(set(view.items), set(widget._network.nodes))
+        right = widget._network.node_for_cap("cap_right")
+        self.clickBlock(view, right.key)
+        self.assertEqual(widget.conditionsTable.selectedFaceIds(), [testing.RIGHT_ID])
+        self.assertIn("cap_right: Resistance", view.infoLabel.text)
+        (vessel,) = widget._network.parents(right.key)
+        self.clickBlock(view, vessel)
+        self.assertEqual(widget.conditionsTable.selectedFaceIds(), [])
+        vesselName = widget._network.nodes[vessel].vessel
+        self.assertEqual(chart.GetNthPlotSeriesNode(0).GetName(), f"{vesselName} inlet")
+        sleeve = widget.logic.selectedVesselNode()
+        self.assertIsNotNone(sleeve)
+        self.assertGreater(sleeve.GetMesh().GetNumberOfPoints(), 0)
+        widget.ui.facesTable.selectRow(widget.conditionsTable.rowOf(testing.LEFT_ID))
+        self.assertEqual(view.selectedKey(), widget._network.node_for_cap("cap_left").key)
+        self.assertIsNone(widget.logic.selectedVesselNode(), "a cap selected clears the vessel")
 
         # Created solver files are run as they are: a resistance doubled by hand in
         # solver_0d.json between creating and running is the one solved. Changing a condition in
