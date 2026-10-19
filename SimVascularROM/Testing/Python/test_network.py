@@ -162,3 +162,14 @@ def test_a_vessel_is_picked_out_on_the_stretch_of_centerline_its_results_are_dra
     coloured = results.centerline_results(centerline, CONFIG, results_for(CONFIG))
     pressure = vtk_to_numpy(coloured.GetPointData().GetArray(results.PRESSURE_ARRAY_NAME))
     assert pressure[1] > 95.0 > pressure[5], "branch2_seg0 and branch2_seg1 where vessel_lines says"
+
+
+def test_a_coronary_block_is_described_as_the_table_names_its_values():
+    bc = {"bc_name": "CORONARY_cap_lca", "bc_type": "CORONARY",
+          "bc_values": {"Ra1": 1.8e5, "Ra2": 2.9e5, "Rv1": 1e5, "Ca": 1.1e-6, "Cc": 9e-6, "P_v": 0.0,
+                        "t": [0.0, 0.5, 1.0], "Pim": [0.0, 2.0e5, 0.0]}}
+    described = {name: (value, unit) for name, value, unit in network._condition_parameters(bc)}
+    assert described["Ram"] == (2.9e5, "dyn·s/cm⁵") and described["Cim"] == (9e-6, "cm⁵/dyn")
+    assert described["Pv"] == (0.0, "dyn/cm²")
+    assert described["mean Pim"][0] == pytest.approx(1.0e5)
+    assert network.KIND_LABELS["CORONARY"] == "Coronary"

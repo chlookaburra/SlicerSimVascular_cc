@@ -1188,6 +1188,8 @@ class SimVascularROMTest(ScriptedLoadableModuleTest):
         self.setUp()
         self.test_aWaveformIsPlottedAndNegatedOnlyIfAsked()
         self.setUp()
+        self.test_aCoronaryIsSetInItsOwnWindow()
+        self.setUp()
         self.test_aMeshWithoutNamesIsSentToMeshPrep()
         self.setUp()
         self.test_aWholeCaseOnAY()
@@ -1354,6 +1356,95 @@ class SimVascularROMTest(ScriptedLoadableModuleTest):
         finally:
             review.dialog.reject()
         self.delayDisplay("A waveform is plotted, and negated only if asked")
+
+    def test_aCoronaryIsSetInItsOwnWindow(self):
+        """The coronary window as SimVascular's: values in its order, Pim from a file stretched onto
+        its period and scaled, plotted as the solver gets it, OK only once all of it reads. In the
+        table, choosing Coronary opens it, double-clicking reopens it with what was set, cancelling
+        leaves the cap as it was, and the cell is not typed in; the 3D panel refuses a coronary."""
+        import tempfile
+
+        from svromsetup import testing
+        from SimVascularROMLib.BoundaryConditionsTable import CoronaryDialog
+
+        path = os.path.join(tempfile.mkdtemp(), "lv.dat")
+        with open(path, "w") as handle:
+            handle.write("# left ventricular pressure, mmHg\n0.0 0\n0.3 100\n1.0 0\n")
+
+        # -- the window --------------------------------------------------------------------
+        window = CoronaryDialog("cap_right", None, cycle=0.8, chooseFile=lambda: path)
+        try:
+            window.dialog.show()
+            ok = window.buttons.button(qt.QDialogButtonBox.Ok)
+            self.assertFalse(ok.enabled, "nothing set yet")
+            for attribute, text in (("Ra", "1.8e5"), ("Ca", "1.1e-6"), ("Ram", "2.9e5"),
+                                    ("Cim", "9e-6"), ("Rv", "1e5")):
+                window.fields[attribute].text = text
+            self.assertFalse(ok.enabled, "no Pim yet")
+            window.browse()
+            self.assertEqual(window.periodField.text, "1", "the file's own period, as SimVascular")
+            self.assertIn("cardiac cycle is 0.8 s", window.messageLabel.text)
+            window.cycleButton.click()
+            self.assertEqual(window.periodField.text, "0.8")
+            window.scaleField.text = "1333.22"
+            coronary = window.result()
+            self.assertEqual((coronary.Ra, coronary.Ca, coronary.Ram, coronary.Cim, coronary.Rv, coronary.Pv),
+                             (1.8e5, 1.1e-6, 2.9e5, 9e-6, 1e5, 0.0))
+            self.assertEqual((coronary.pim_period, coronary.pim_scale), (0.8, 1333.22))
+            curve = window.chart.curve
+            self.assertEqual(curve.GetNumberOfRows(), 3)
+            self.assertAlmostEqual(curve.GetValue(2, 0).ToDouble(), 0.8, msg="plotted as the solver gets it")
+            self.assertAlmostEqual(curve.GetValue(1, 1).ToDouble(), 133322.0, places=3)
+            self.assertIn("mmHg", window.summaryLabel.text)
+            self.assertEqual(window.messageLabel.text, "")
+            self.assertTrue(ok.enabled)
+            window.fields["Ca"].text = "-1"
+            self.assertFalse(ok.enabled, "a value that does not read is no coronary")
+            self.assertIn("Ca has to be a number more than 0", window.messageLabel.text)
+            window.fields["Ca"].text = "1.1e-6"
+        finally:
+            window.dialog.reject()
+
+        # -- in the table ------------------------------------------------------------------
+        widget = self.widget()
+        node = self.namedY()
+        widget.ui.inputMeshSelector.setCurrentNode(node)
+        table = widget.conditionsTable
+        self.typeCondition(widget, testing.INLET_ID, bcs.INFLOW, "10")
+        self.typeCondition(widget, testing.LEFT_ID, bcs.RESISTANCE_KIND, "2000")
+        asked = []
+        answers = [coronary]
+        table.askCoronary = lambda faceId, current: asked.append((faceId, current)) or answers.pop(0)
+        try:
+            row = table.rowOf(testing.RIGHT_ID)
+            widget.ui.facesTable.cellWidget(row, TYPE_COLUMN).currentIndex = KIND_CHOICES.index(bcs.CORONARY_KIND)
+            slicer.app.processEvents()
+            self.assertEqual(asked, [(testing.RIGHT_ID, None)], "choosing Coronary opens its window")
+            self.assertEqual(table.conditions[testing.RIGHT_ID], coronary)
+            cell = widget.ui.facesTable.item(row, VALUES_COLUMN)
+            self.assertTrue(cell.text().endswith("| Pim: lv.dat x 1333.22 over 0.8 s"))
+            self.assertFalse(cell.flags() & qt.Qt.ItemIsEditable, "set in its window, not typed")
+            self.assertIn("coronary set", widget.ui.statusLabel.text)
+            self.assertEqual(bcs.problems(table.conditions, table.capNames(), testing.INLET_ID), [])
+
+            # Reopened with what was set; cancelled, the cap keeps it.
+            answers.append(None)
+            table.onCellDoubleClicked(row, VALUES_COLUMN)
+            self.assertEqual(asked[-1], (testing.RIGHT_ID, coronary))
+            self.assertEqual(table.conditions[testing.RIGHT_ID], coronary)
+        finally:
+            del table.askCoronary
+
+        # The 3D panel has the same conditions, and says it cannot write a coronary yet.
+        slicer.util.selectModule("SimVascularMultiPhysics")
+        multiphysics = slicer.util.getModuleWidget("SimVascularMultiPhysics")
+        multiphysics.ui.inputMeshSelector.setCurrentNode(None)
+        multiphysics.ui.inputMeshSelector.setCurrentNode(node)
+        self.assertIn("cap_right is a coronary, which SimVascular MultiPhysics does not write yet",
+                      " ".join(multiphysics.problems()))
+        self.assertFalse(multiphysics.ui.createSolverFilesButton.enabled)
+        slicer.util.selectModule("SimVascularROM")
+        self.delayDisplay("A coronary is set in its own window")
 
     def test_aMeshWithoutNamesIsSentToMeshPrep(self):
         from svmeshcomplete import testing

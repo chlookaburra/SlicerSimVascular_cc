@@ -19,6 +19,7 @@ case/
   centerlines.vtp             branch-split, from the inlet
   inflow.flow, flow.dat       the inflows
   rcrt.dat, resistance.dat    the outlets
+  cort.dat                    the coronary outlets
   solver_0d.json              svZeroDSolver's input
   branch_results.csv          its output, per vessel segment
   cap_results.csv             the same per cap, from Export results

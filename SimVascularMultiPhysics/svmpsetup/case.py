@@ -37,7 +37,7 @@ from svmeshcomplete.mesh_complete import (
 from svromsetup import boundary_conditions as bcs
 
 from svmpsetup import settings as settings_module
-from svmpsetup.solver_xml import solver_xml, write_flow_file
+from svmpsetup.solver_xml import coronary_refusal, solver_xml, write_flow_file
 
 SOLVER_XML_NAME = "solver.xml"
 MESH_DIR_NAME = "mesh"
@@ -67,6 +67,8 @@ def problems(conditions_by_name, cap_names, values=None) -> list:
     by_id = dict(enumerate(cap_names))
     found = bcs.problems({index: conditions_by_name.get(name) for index, name in by_id.items()},
                          by_id, None, source_required=False)
+    found += [coronary_refusal(name) for name in cap_names
+              if isinstance(conditions_by_name.get(name), bcs.Coronary)]
     try:
         settings_module.resolve(values)
     except settings_module.SettingError as error:

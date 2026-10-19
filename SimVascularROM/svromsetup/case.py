@@ -70,6 +70,7 @@ CAP_RESULTS_NAME = "cap_results.csv"
 # condition by which of them it is given.
 RCR_FILE_NAME = "rcrt.dat"
 RESISTANCE_FILE_NAME = "resistance.dat"
+CORONARY_FILE_NAME = "cort.dat"
 FLOW_LIST_FILE_NAME = "flow.dat"
 
 # The name the package gives the inlet's condition. Every other one is named after its face.
@@ -219,7 +220,7 @@ def write_boundary_conditions(case_dir, conditions_by_name, inlet_name: str) -> 
     case_dir = Path(case_dir)
     case_dir.mkdir(parents=True, exist_ok=True)
     for stale in [case_dir / name for name in (RCR_FILE_NAME, RESISTANCE_FILE_NAME,
-                                               FLOW_LIST_FILE_NAME, INFLOW_NAME)]:
+                                               CORONARY_FILE_NAME, FLOW_LIST_FILE_NAME, INFLOW_NAME)]:
         if stale.is_file():
             stale.unlink()
     for stale in case_dir.glob("*.flow"):
@@ -238,6 +239,10 @@ def write_boundary_conditions(case_dir, conditions_by_name, inlet_name: str) -> 
     flows = {name: c for name, c in others.items() if isinstance(c, bcs.Inflow)}
     rcrs = {name: c for name, c in others.items() if isinstance(c, bcs.RCR)}
     resistances = {name: c for name, c in others.items() if isinstance(c, bcs.Resistance)}
+    coronaries = {name: c for name, c in others.items() if isinstance(c, bcs.Coronary)}
+    missing = sorted(name for name, c in coronaries.items() if c.pim is None)
+    if missing:
+        raise CaseError(f"{', '.join(missing)} is a coronary without its intramyocardial pressure.")
 
     files = []
     if flows:
@@ -253,9 +258,12 @@ def write_boundary_conditions(case_dir, conditions_by_name, inlet_name: str) -> 
     if resistances:
         bcs.write_resistance(case_dir / RESISTANCE_FILE_NAME, resistances)
         files.append(RESISTANCE_FILE_NAME)
-    if not (rcrs or resistances):
-        raise CaseError("At least one outlet has to be an RCR or a resistance: with flow "
-                        "prescribed everywhere, nothing sets the pressure.")
+    if coronaries:
+        bcs.write_cort(case_dir / CORONARY_FILE_NAME, coronaries)
+        files.append(CORONARY_FILE_NAME)
+    if not (rcrs or resistances or coronaries):
+        raise CaseError("At least one outlet has to be an RCR, a resistance or a coronary: with "
+                        "flow prescribed everywhere, nothing sets the pressure.")
     return {
         "inflow_input_file": str(case_dir / INFLOW_NAME),
         "outflow_bc_type": ",".join(files),
@@ -299,8 +307,45 @@ def write_solver_input(case_dir, conditions_by_name, inlet_face_id: int, inlet_n
         )
     if not result or not output.is_file():
         raise CaseError(_message("The solver input could not be written", errors))
+    write_coronaries_as_set(output, conditions_by_name, inlet_name)
     check_solver_input(output, conditions_by_name, inlet_name, parameters)
     return output
+
+
+# A coronary's values as svZeroDSolver names them.
+CORONARY_VALUE_NAMES = (("Ra1", "Ra"), ("Ra2", "Ram"), ("Rv1", "Rv"), ("Ca", "Ca"), ("Cc", "Cim"))
+
+
+def write_coronaries_as_set(path, conditions_by_name, inlet_name: str):
+    """Each coronary in the solver input given its values exactly as they were set, its venous
+    pressure among them.
+
+    The package takes a coronary only as `cort.dat`'s coefficients, works the five values back
+    out of them -- to rounding -- and gives every coronary a venous pressure of 0, whatever it
+    was. So the values it wrote are held to the ones set first, which proves the coefficients
+    were the ones it reads, and then replaced by them; a value it read back as anything else is
+    refused rather than written, since that would be a coronary nobody set.
+    """
+    path = Path(path)
+    config = json.loads(path.read_text())
+    written = {bc["bc_name"]: bc for bc in config.get("boundary_conditions", [])}
+    changed = False
+    for name, condition in conditions_by_name.items():
+        if name == inlet_name or not isinstance(condition, bcs.Coronary):
+            continue
+        bc = written.get(f"CORONARY_{name}")
+        if bc is None:
+            continue    # check_solver_input says so, by name
+        values = bc["bc_values"]
+        for key, attribute in CORONARY_VALUE_NAMES:
+            if not np.isclose(float(values.get(key, np.nan)), getattr(condition, attribute), rtol=1e-6):
+                raise CaseError(f"The package read {name}'s coronary back with {key} "
+                                f"{values.get(key)}, not the {getattr(condition, attribute):g} set.")
+            values[key] = getattr(condition, attribute)
+        values["P_v"] = condition.Pv
+        changed = True
+    if changed:
+        path.write_text(json.dumps(config, indent=4, sort_keys=True))
 
 
 def check_solver_input(path, conditions_by_name, inlet_name: str,
@@ -323,7 +368,8 @@ def check_solver_input(path, conditions_by_name, inlet_name: str,
     for name, condition in conditions_by_name.items():
         if name == inlet_name:
             continue
-        kind = {bcs.Inflow: "FLOW", bcs.RCR: "RCR", bcs.Resistance: "RESISTANCE"}[type(condition)]
+        kind = {bcs.Inflow: "FLOW", bcs.RCR: "RCR", bcs.Resistance: "RESISTANCE",
+                bcs.Coronary: "CORONARY"}[type(condition)]
         expected[f"{kind}_{name}"] = (name, kind)
 
     found = []

@@ -44,6 +44,15 @@ All four are in Slicer itself, and nothing has to be installed for them.
    - **Resistance**: double-click and type `R`. A resistance drains to zero pressure and has no
      distal pressure, as svMultiPhysics' Resistance condition has none and the same conditions
      are written for the 3D solver; an outlet that needs a pressure to drain to is an RCR.
+   - **Coronary**: choosing it opens a window, as SimVascular's Set Inlet/Outlet BCs does. Its
+     fields take, in SimVascular's order, Ra, Ca, Ra-micro, Cim and Rv: arterial resistance and
+     compliance, microvascular resistance, intramyocardial compliance and venous resistance.
+     Then the venous pressure Pv, 0 if left empty. Below them, **Browse...** loads the
+     intramyocardial pressure Pim from a file laid out as a `.flow` is, time then pressure.
+     **P<sub>im</sub> period** stretches it onto another period, and **Use the inflow's** sets
+     that to the inflow's cycle; **P<sub>im</sub> scaling** multiplies its values, so 1333.22
+     takes a file in mmHg to dyn/cm². The Pim is plotted as the solver will get it. Double-click
+     the values to open the window again. See [Coronary outlets](#coronary-outlets).
 
    Values are in cgs units: flow in mL/s, resistance in dyn·s/cm⁵, compliance in cm⁵/dyn,
    pressure in dyn/cm² (1 mmHg = 1333.22 dyn/cm²). A value that cannot be read is shown in
@@ -104,6 +113,7 @@ holds results shows them again when the mesh is selected.
   inflow.flow                   the source's flow
   flow.dat, cap_*.flow          the other inflows
   rcrt.dat, resistance.dat      the outlets
+  cort.dat                      the coronary outlets, as SimVascular writes them
   solver_0d.json                svZeroDSolver's input
   branch_results.csv            svZeroDSolver's output, per vessel segment
   cap_results.csv               Export results' suggestion: the same results, per cap
@@ -114,6 +124,48 @@ The boundary conditions in `solver_0d.json` are named after their faces (`RCR_ca
 vessel segment, named `branch<b>_seg<s>`, which is why their file is `branch_results.csv`; the
 panel works out which vessel end each cap is, and **Export results** writes the same results by
 cap name, suggested as `cap_results.csv` beside it.
+
+### Coronary outlets
+
+A coronary outlet is svZeroDSolver's open-loop coronary (`CORONARY`), after Kim et al.,
+*Patient-specific modeling of blood flow and pressure in human coronary arteries*, Ann. Biomed.
+Eng. 38 (2010): Ra and Ca, then Ram and Cim, the intramyocardial compliance that Pim acts on,
+then Rv to the venous pressure Pv. An RCR cannot stand in for it. Coronary flow is highest in
+diastole, because the contracting heart squeezes its own vessels in systole, and Pim is what does
+the squeezing: given one, the coronary takes less flow while it is high than it would with none.
+
+- **Set as SimVascular sets it.** Its values in SimVascular's order, Ra, Ca, Ra-micro, Cim, Rv,
+  so that values from a SimVascular project, or a paper that follows it, go in as they read; and
+  its Pim as SimVascular's Pim Period and Pim Scaling take it: the file's times stretched onto the
+  period, its values multiplied by the scaling. A field each, beside its unit, rather than
+  SimVascular's five on one line: five numbers several orders of magnitude apart, in two units,
+  are where a value goes in the wrong place. Pv is svZeroDSolver's, beyond SimVascular's.
+- **The file is kept as it is.** The scene keeps the file's own times and values, with the period
+  and the scaling, so that the window shows again what was chosen. A file in mmHg is scaled by
+  1333.22; nothing converts it otherwise, as nothing converts any other value here. Pim is
+  usually a ventricular pressure, scaled, and differs between a left and a right coronary, so each
+  outlet has its own.
+- **It has to cover the inflow's cardiac cycle.** svZeroDSolver refuses any two time-varying
+  values whose periods differ at all, and says only "Inconsistent cardiac cycle period". So the
+  window says so beside the period, with a button to use the inflow's, and the panel names it as
+  what stops the run. Periods that agree to rounding (0.909091 s against 0.9090909091 s) are the
+  same cycle, and the Pim is put on the inflow's exactly. With every inflow steady, the Pim's
+  period is the cycle.
+- **OK only once it is a coronary.** The window's OK is enabled once every value reads and a Pim
+  is loaded; a period off the inflow's is allowed, so that a coronary set before its inflow is
+  kept, and is named by the panel until it is put right.
+- **Written through `cort.dat`, then set exactly.** svromutils takes a coronary only as
+  SimVascular's `cort.dat`, which holds it as the coefficients of its differential equation, and
+  works the five values back out of them; and it gives every coronary a venous pressure of 0. So
+  `cort.dat` is written in those coefficients, the values svromutils works back out are held to
+  the ones set -- which proves the coefficients are the ones it reads -- and `solver_0d.json` is
+  then given the values exactly as set, `Pv` with them. A value read back as anything else is
+  refused rather than written.
+- **SimVascular MultiPhysics refuses one, for now.** svMultiPhysics has no coronary condition
+  of its own: it takes one only coupled to svZeroDSolver, through svZeroDSolver's interface
+  library, which neither pip's `svzerod` nor the SimVascular installers carry. The conditions are
+  shared, so a coronary set here shows in the 3D panel, which names it as what stops the case
+  being written.
 
 ### Several inflows
 

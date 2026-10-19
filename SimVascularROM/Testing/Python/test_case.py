@@ -132,3 +132,48 @@ def test_flow_is_conserved_through_the_model(y_case):
     pressure = vtk_to_numpy(coloured.GetPointData().GetArray(results.PRESSURE_ARRAY_NAME))
     assert pressure.min() == pytest.approx(faces["cap_right"].mean_pressure_mmhg, rel=1e-3)
     assert pressure.max() <= faces["cap_left"].mean_pressure_mmhg + 1e-6
+
+
+@needs_solver
+def test_a_coronary_is_written_as_set_and_its_pim_holds_back_systolic_flow(y_case):
+    """The coronary in the solver input is the one set, venous pressure and all, on the inflow's
+    exact cycle; and solved, its Pim does what it is there for: it squeezes the coronary, so that
+    less flows into it while the heart contracts than would with no Pim at all."""
+    from svromsetup.boundary_conditions import Coronary, Pressure
+
+    directory, _centerlines = y_case
+    inflow = Inflow((0.0, 0.4, 0.8), (5.0, 15.0, 5.0))
+    # Read as if from a file rounded to six figures: the same cycle, not the same number.
+    systole = Pressure((0.0, 0.1, 0.3, 0.5, 0.8000003), (0.0, 1.2e5, 1.2e5, 0.0, 0.0))
+    resting = Pressure((0.0, 0.8), (0.0, 0.0))
+    coronary = Coronary(Ra=1.8e5, Ca=1.1e-6, Ram=2.9e5, Cim=9e-6, Rv=1e5, Pv=1000.0)
+    parameters = case.SimulationParameters(cardiac_cycles=8, points_per_cycle=80)
+
+    def solve(pim):
+        conditions = {"cap_inlet": inflow, "cap_right": coronary.with_pim(pim),
+                      "cap_left": Resistance(5000.0)}
+        config = case.write_solver_input(directory, conditions, testing.INLET_ID, "cap_inlet",
+                                         parameters, "y")
+        solver.run_solver(config, directory / case.RESULTS_NAME, SOLVER)
+        solved = solver.read_results(directory / case.RESULTS_NAME)
+        return json.loads(config.read_text()), {
+            face.name: face for face in results.face_results(config, solved, "cap_inlet")}
+
+    config, faces = solve(systole)
+    assert (directory / case.CORONARY_FILE_NAME).is_file()
+    written = {bc["bc_name"]: bc for bc in config["boundary_conditions"]}["CORONARY_cap_right"]["bc_values"]
+    assert (written["Ra1"], written["Ra2"], written["Rv1"], written["Ca"], written["Cc"], written["P_v"]) == \
+        (1.8e5, 2.9e5, 1e5, 1.1e-6, 9e-6, 1000.0), "the values as set, not as worked back out"
+    assert written["t"][-1] == 0.8, "put on the inflow's exact cycle"
+    assert written["Pim"] == list(systole.pressure), "unscaled, as set"
+    right = faces["cap_right"]
+    assert np.isfinite(right.flow).all() and np.isfinite(right.pressure).all()
+    # Over a converged cycle what comes in goes out, the coronary's stored volume included.
+    assert faces["cap_right"].mean_flow + faces["cap_left"].mean_flow == pytest.approx(
+        faces["cap_inlet"].mean_flow, rel=2e-2)
+
+    _config, rest = solve(resting)
+    phase = np.mod(right.time - right.time[0], 0.8)
+    squeezed = (phase > 0.12) & (phase < 0.28)
+    assert right.flow[squeezed].mean() < rest["cap_right"].flow[squeezed].mean(), \
+        "Pim holds back coronary flow while it is high"

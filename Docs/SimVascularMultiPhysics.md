@@ -130,7 +130,18 @@ A test is written beside it, never in it:
 | Inflow, steady | `Dir`, `Steady`, `Value` |
 | RCR | `Neu`, `RCR`, with `RCR_values` and the initial pressure from the settings |
 | Resistance | `Neu`, `Resistance`, `Value` |
+| Coronary | refused, for now: see below |
 | (every wall face) | `Dir`, `Steady`, `Value` 0: no slip |
+
+**A coronary is not written yet.** svMultiPhysics has no coronary condition of its own. It takes
+one only as `Time_dependence` `Coupled`, the outlet coupled to svZeroDSolver through
+svZeroDSolver's interface library (`libsvzero_interface`), which it loads at run time, with the
+coronary in a 0D input file of its own. Neither pip's `svzerod` nor the SimVascular installers
+carry that library, so a case written to use it would run nowhere a student could run it until
+a build of it is there too, the cluster included. So the panel names a coronary as what stops the
+case being written, rather than writing something in its place: an RCR there would be another
+condition, with no intramyocardial pressure, and coronary flow highest in systole instead of in
+diastole. Coronaries are SimVascular ROM Simulation's, for now.
 
 **Inflow is written negative.** The table takes an inflow as positive, into the model, as the 0D
 solvers do. svMultiPhysics measures a face's flow along its outward normal, so flow into the

@@ -23,7 +23,7 @@ import xml.etree.ElementTree as ET
 from typing import Mapping, Sequence
 
 from svmeshcomplete.face_table import Face
-from svromsetup.boundary_conditions import RCR, Inflow, Resistance
+from svromsetup.boundary_conditions import RCR, Coronary, Inflow, Resistance
 
 from svmpsetup import settings as settings_module
 
@@ -183,9 +183,27 @@ def _cap_condition(name, condition, resolved, flow_file_paths) -> ET.Element:
         ET.SubElement(bc, "Type").text = "Neu"
         ET.SubElement(bc, "Time_dependence").text = "Resistance"
         ET.SubElement(bc, "Value").text = repr(float(condition.R))
+    elif isinstance(condition, Coronary):
+        raise SolverXmlError(coronary_refusal(name))
     else:
         raise SolverXmlError(f"{name} has a condition the 3D writer does not know: {condition!r}.")
     return bc
+
+
+def coronary_refusal(name: str) -> str:
+    """Why a coronary outlet is not written, in words.
+
+    svMultiPhysics has no coronary condition of its own: it takes one only as `Time_dependence`
+    Coupled, its outlet coupled to svZeroDSolver through svZeroDSolver's interface library, which
+    it loads at run time. Neither the pip `svzerod` nor the SimVascular installers carry that
+    library, so a case written to use it would run nowhere a student could run it, the cluster
+    included, until a build of it is there too. Refused for now, by the user's decision, rather
+    than written as something else: an RCR in its place would be a different condition -- no
+    intramyocardial pressure, so systolic and diastolic coronary flow the wrong way round.
+    """
+    return (f"{name} is a coronary, which SimVascular MultiPhysics does not write yet: "
+            "svMultiPhysics takes a coronary only coupled to svZeroDSolver. Give the 3D case an RCR "
+            "or a resistance there, or simulate the coronary in SimVascular ROM Simulation.")
 
 
 def _setting(parent, tag, key, resolved) -> None:

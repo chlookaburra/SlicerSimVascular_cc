@@ -126,6 +126,20 @@ def test_a_case_that_cannot_close_is_refused_before_anything_is_written(tmp_path
     assert not (tmp_path / "solver.xml").exists()
 
 
+def test_a_coronary_is_refused_by_name_and_nothing_is_written(tmp_path):
+    """svMultiPhysics takes a coronary only coupled to svZeroDSolver, which this writer does not do
+    yet: said, by name, rather than written as some other condition."""
+    from svromsetup.boundary_conditions import Coronary, Pressure
+
+    coronary = Coronary(Ra=1.8e5, Ca=1.1e-6, Ram=2.9e5, Cim=9e-6, Rv=1e5).with_pim(Pressure((0.0, 1.0), (0.0, 0.0)))
+    conditions = {"cap_inlet": Inflow.steady(10.0), "cap_outlet": coronary}
+    found = " ".join(case.problems(conditions, ["cap_inlet", "cap_outlet"]))
+    assert "cap_outlet is a coronary, which SimVascular MultiPhysics does not write yet" in found
+    with pytest.raises(case.CaseError, match="cap_outlet is a coronary"):
+        case.write_case(tmp_path, testing.cube_mesh(), NAMES, conditions)
+    assert not (tmp_path / "solver.xml").exists()
+
+
 def test_a_surface_is_not_a_volume_mesh(tmp_path):
     from svmeshcomplete import faces
     surface = faces.boundary_of(testing.cube_mesh())

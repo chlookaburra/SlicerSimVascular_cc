@@ -37,14 +37,17 @@ _VESSEL_NAME = re.compile(r"^branch(\d+)_seg(\d+)$")
 
 # What the solver input calls a kind of condition, as the boundary conditions table calls it.
 KIND_LABELS = {"FLOW": bcs.INFLOW, "RCR": bcs.RCR_KIND, "RESISTANCE": bcs.RESISTANCE_KIND,
-               "PRESSURE": "Pressure"}
+               "CORONARY": bcs.CORONARY_KIND, "PRESSURE": "Pressure"}
 
 # A vessel's element values, as the solver input names them, with what to call them and their
 # units: cgs, which the package writes them in.
 VESSEL_VALUES = (("R_poiseuille", "R", "dyn·s/cm⁵"), ("C", "C", "cm⁵/dyn"), ("L", "L", "g/cm⁴"),
                  ("stenosis_coefficient", "stenosis", "dyn·s²/cm⁸"))
 CONDITION_UNITS = {"R": "dyn·s/cm⁵", "Rp": "dyn·s/cm⁵", "Rd": "dyn·s/cm⁵", "C": "cm⁵/dyn",
-                   "Pd": "dyn/cm²"}
+                   "Pd": "dyn/cm²", "Ra1": "dyn·s/cm⁵", "Ra2": "dyn·s/cm⁵", "Rv1": "dyn·s/cm⁵",
+                   "Ca": "cm⁵/dyn", "Cc": "cm⁵/dyn", "P_v": "dyn/cm²"}
+# A coronary's values as the table calls them, rather than as svZeroDSolver does.
+CONDITION_NAMES = {"Ra1": "Ra", "Ra2": "Ram", "Rv1": "Rv", "Cc": "Cim", "P_v": "Pv"}
 
 
 @dataclass(frozen=True)
@@ -173,8 +176,12 @@ def _condition_parameters(bc) -> tuple:
         time, flow = np.asarray(values["t"], dtype=float), np.asarray(values["Q"], dtype=float)
         return (("points", len(time), ""), ("period", float(time[-1] - time[0]), "s"),
                 ("mean Q", _cycle_mean(time, flow), "mL/s"))
-    return tuple((name, float(value), CONDITION_UNITS.get(name, ""))
-                 for name, value in values.items() if isinstance(value, (int, float)))
+    found = tuple((CONDITION_NAMES.get(name, name), float(value), CONDITION_UNITS.get(name, ""))
+                  for name, value in values.items() if isinstance(value, (int, float)))
+    if "Pim" in values and "t" in values:
+        time, pim = np.asarray(values["t"], dtype=float), np.asarray(values["Pim"], dtype=float)
+        found += (("mean Pim", _cycle_mean(time, pim), "dyn/cm²"),)
+    return found
 
 
 def layered_layout(network: Network, conditions_last: bool = True) -> dict:
